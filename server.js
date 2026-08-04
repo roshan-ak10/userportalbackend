@@ -79,42 +79,79 @@ app.post('/api/login', async (req, res) => {
     if (!user) return res.status(400).json({ error: "User not found" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
+    if (isMatch) {
+      // 1. Create the new session log
+      const newSession = new SessionLog({ userId: user._id });
+      await newSession.save();
 
+      // 2. Send data back
+      res.json({
+        message: "Login successful",
+        role: user.role,
+        sessionId: newSession._id
+      });
+    } else {
+      res.status(400).json({ error: "Invalid credentials" });
+    }
     res.status(200).json({ message: "Login successful", user: { email: user.email, name: user.name } });
   } catch (error) {
     res.status(500).json({ error: "Error logging in" });
   }
 });
 
-app.post('/api/upload-details', upload.single('photo'), async (req, res) => {
+// POST: Create a new test (Admin only)
+app.post('/api/tests', async (req, res) => {
+  const { testName, durationMinutes, startTime } = req.body;
+
   try {
-    const { email, dob, regno, userClass, section } = req.body;
+    const newTest = new Test({
+      testName,
+      durationMinutes,
+      startTime
+    });
     
-    const updateData = {};
-    if (dob) updateData.dob = dob;
-    if (regno) updateData.regno = regno;
-    if (userClass) updateData.userClass = userClass;
-    if (section) updateData.section = section;
-    
-    // THE MAGIC FIX: req.file.path now contains the secure Cloudinary URL!
-    if (req.file) {
-      updateData.photoUrl = req.file.path; 
+    await newTest.save();
+    res.status(201).json({ message: "Test created successfully", test: newTest });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create test" });
+  }
+});
+
+// POST: Add a question to a specific test
+app.post('/api/questions', async (req, res) => {
+  const { testId, questionText, options, correctAnswer } = req.body;
+
+  try {
+    // Basic validation to ensure the admin provided exactly 4 options
+    if (!options || options.length !== 4) {
+      return res.status(400).json({ error: "Exactly 4 options are required" });
     }
 
-    await User.findOneAndUpdate(
-      { email: email }, 
-      { $set: updateData },
-      { returnDocument: 'after' } 
-    );
+    const newQuestion = new Question({
+      testId,
+      questionText,
+      options,
+      correctAnswer
+    });
 
-    res.status(200).json({ message: "Details saved successfully!" });
+    await newQuestion.save();
+    res.status(201).json({ message: "Question added successfully" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Error saving details" });
+    res.status(500).json({ error: "Failed to add question" });
+  }
+});
+
+// GET: Fetch all scheduled tests for the student dashboard
+app.get('/api/tests', async (req, res) => {
+  try {
+    // Fetch all tests where isScheduled is true
+    const tests = await Test.find({ isScheduled: true });
+    res.status(200).json(tests);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch tests" });
   }
 });
 
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
