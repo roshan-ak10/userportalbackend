@@ -6,6 +6,8 @@ const cors = require('cors');
 require('dotenv').config();
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const Test = require('./models/Test');           // <--- THIS IS CRITICAL
+const Question = require('./models/Question');
 
 // IMPORT YOUR NEW USER MODEL HERE
 const User = require('./models/User'); 
