@@ -1,12 +1,11 @@
 const mongoose = require('mongoose');
 
 const testSchema = new mongoose.Schema({
-  testName: { type: String, required: true }, // e.g., "C++ Pointers"
+  testName: { type: String, required: true },
   durationMinutes: { type: Number, required: true },
+  totalQuestions: { type: Number, required: true }, // <-- This was missing!
   isScheduled: { type: Boolean, default: true },
-  startTime: { type: Date } // Admin can set a specific date/time for the test
+  startTime: { type: Date }
 });
-
-
 
 module.exports = mongoose.model('Test', testSchema);
