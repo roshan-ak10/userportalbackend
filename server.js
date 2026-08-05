@@ -8,6 +8,7 @@ const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Test = require('./models/Test');           // <--- THIS IS CRITICAL
 const Question = require('./models/Question');
+const SessionLog = require('./models/SessionLog');
 
 // IMPORT YOUR NEW USER MODEL HERE
 const User = require('./models/User'); 
@@ -81,22 +82,26 @@ app.post('/api/login', async (req, res) => {
     if (!user) return res.status(400).json({ error: "User not found" });
 
     const isMatch = await bcrypt.compare(password, user.password);
+    
     if (isMatch) {
       // 1. Create the new session log
       const newSession = new SessionLog({ userId: user._id });
       await newSession.save();
 
-      // 2. Send data back
-      res.json({
+      // 2. Send data back AND add 'return' to stop the code here
+      return res.json({
         message: "Login successful",
         role: user.role,
         sessionId: newSession._id
       });
     } else {
-      res.status(400).json({ error: "Invalid credentials" });
+      return res.status(400).json({ error: "Invalid credentials" });
     }
-    res.status(200).json({ message: "Login successful", user: { email: user.email, name: user.name } });
+    
+    // I deleted the duplicate response that was crashing your server here!
+    
   } catch (error) {
+    console.error("LOGIN ERROR:", error); // This prints the exact error in Render logs
     res.status(500).json({ error: "Error logging in" });
   }
 });
@@ -109,6 +114,7 @@ app.post('/api/tests', async (req, res) => {
     const newTest = new Test({
       testName,
       durationMinutes,
+      totalQuestions,
       startTime
     });
     
