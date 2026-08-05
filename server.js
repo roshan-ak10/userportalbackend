@@ -92,7 +92,8 @@ app.post('/api/login', async (req, res) => {
       return res.json({
         message: "Login successful",
         role: user.role,
-        sessionId: newSession._id
+        sessionId: newSession._id,
+        name:user.name
       });
     } else {
       return res.status(400).json({ error: "Invalid credentials" });
