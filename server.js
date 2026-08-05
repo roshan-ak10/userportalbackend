@@ -6,12 +6,13 @@ const cors = require('cors');
 require('dotenv').config();
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const Test = require('./models/Test');           // <--- THIS IS CRITICAL
+const Test = require('./models/Test');
 const Question = require('./models/Question');
 const SessionLog = require('./models/SessionLog');
 
 // IMPORT YOUR NEW USER MODEL HERE
 const User = require('./models/User'); 
+const Result = require('./models/Result');
 
 const app = express();
 app.use(express.json());
@@ -85,7 +86,7 @@ app.post('/api/login', async (req, res) => {
     
     if (isMatch) {
       // 1. Create the new session log
-      const newSession = new SessionLog({ userId: user._id });
+      const newSession = new SessionLog({ userId: user._id , email:user.email });
       await newSession.save();
 
       // 2. Send data back AND add 'return' to stop the code here
@@ -160,6 +161,63 @@ app.get('/api/tests', async (req, res) => {
     res.status(200).json(tests);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch tests" });
+  }
+});
+
+// GET: Fetch a single test's details (for the timer)
+app.get('/api/tests/:id', async (req, res) => {
+  try {
+    const test = await Test.findById(req.params.id);
+    if (!test) return res.status(404).json({ error: "Test not found" });
+    res.status(200).json(test);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch test details" });
+  }
+});
+
+// GET: Fetch all questions for a specific test
+app.get('/api/questions/:testId', async (req, res) => {
+  try {
+    const questions = await Question.find({ testId: req.params.testId });
+    res.status(200).json(questions);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch questions" });
+  }
+});
+
+// POST: Save a student's test result
+app.post('/api/results', async (req, res) => {
+  const { testId, studentName, studentEmail, score, totalQuestions } = req.body;
+
+  try {
+    const newResult = new Result({
+      testId,
+      studentName,
+      studentEmail,
+      score,
+      totalQuestions
+    });
+    
+    await newResult.save();
+    res.status(201).json({ message: "Score saved successfully!" });
+  } catch (error) {
+    console.error("SAVE SCORE ERROR:", error);
+    res.status(500).json({ error: "Failed to save score" });
+  }
+});
+
+// GET: Fetch all student results for the Admin Dashboard
+app.get('/api/results', async (req, res) => {
+  try {
+    // Fetch all results, get the actual test name, and sort by newest first
+    const results = await Result.find()
+      .populate('testId', 'testName')
+      .sort({ submittedAt: -1 }); 
+      
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("FETCH RESULTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch results" });
   }
 });
 

@@ -1,4 +1,3 @@
-// models/SessionLog.js
 const mongoose = require('mongoose');
 
 const sessionLogSchema = new mongoose.Schema({
@@ -7,12 +6,16 @@ const sessionLogSchema = new mongoose.Schema({
     ref: 'User', 
     required: true 
   },
+  email: { 
+    type: String, 
+    required: true // <-- ADD THIS
+  },
   loginTime: { 
     type: Date, 
-    default: Date.now // Automatically saves the exact moment they log in
+    default: Date.now 
   },
   logoutTime: { 
-    type: Date // Left empty until they actually click logout
+    type: Date 
   }
 });
 
