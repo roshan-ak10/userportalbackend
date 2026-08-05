@@ -109,19 +109,21 @@ app.post('/api/login', async (req, res) => {
 
 // POST: Create a new test (Admin only)
 app.post('/api/tests', async (req, res) => {
-  const { testName, durationMinutes, startTime } = req.body;
+  // 1. Notice we are extracting totalQuestions here!
+  const { testName, durationMinutes, totalQuestions, startTime } = req.body;
 
   try {
     const newTest = new Test({
       testName,
       durationMinutes,
-      totalQuestions,
+      totalQuestions, // 2. And we are passing it to the database here!
       startTime
     });
     
     await newTest.save();
     res.status(201).json({ message: "Test created successfully", test: newTest });
   } catch (error) {
+    console.error("CREATE TEST ERROR:", error); // Logs the exact reason to Render
     res.status(500).json({ error: "Failed to create test" });
   }
 });
