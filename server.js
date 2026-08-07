@@ -129,6 +129,40 @@ app.post('/api/tests', async (req, res) => {
   }
 });
 
+// PUT: Update an existing test
+app.put('/api/tests/:id', async (req, res) => {
+  try {
+    const updatedTest = await Test.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true } // Returns the updated document
+    );
+    if (!updatedTest) return res.status(404).json({ error: "Test not found" });
+    res.json({ message: "Test updated successfully", test: updatedTest });
+  } catch (error) {
+    console.error("UPDATE TEST ERROR:", error);
+    res.status(500).json({ error: "Failed to update test" });
+  }
+});
+
+// DELETE: Delete a test AND its questions
+app.delete('/api/tests/:id', async (req, res) => {
+  try {
+    // 1. Delete the test
+    const deletedTest = await Test.findByIdAndDelete(req.params.id);
+    if (!deletedTest) return res.status(404).json({ error: "Test not found" });
+    
+    // 2. Delete all questions attached to this test
+    const Question = require('./models/Question'); // Ensure Question model is accessible
+    await Question.deleteMany({ testId: req.params.id });
+
+    res.json({ message: "Test and associated questions deleted successfully" });
+  } catch (error) {
+    console.error("DELETE TEST ERROR:", error);
+    res.status(500).json({ error: "Failed to delete test" });
+  }
+});
+
 // POST: Add a question to a specific test
 app.post('/api/questions', async (req, res) => {
   const { testId, questionText, options, correctAnswer } = req.body;
@@ -161,6 +195,34 @@ app.get('/api/tests', async (req, res) => {
     res.status(200).json(tests);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch tests" });
+  }
+});
+
+// PUT: Update a specific question
+app.put('/api/questions/:id', async (req, res) => {
+  try {
+    const updatedQuestion = await Question.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    if (!updatedQuestion) return res.status(404).json({ error: "Question not found" });
+    res.json({ message: "Question updated successfully", question: updatedQuestion });
+  } catch (error) {
+    console.error("UPDATE QUESTION ERROR:", error);
+    res.status(500).json({ error: "Failed to update question" });
+  }
+});
+
+// DELETE: Delete a specific question
+app.delete('/api/questions/:id', async (req, res) => {
+  try {
+    const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
+    if (!deletedQuestion) return res.status(404).json({ error: "Question not found" });
+    res.json({ message: "Question deleted successfully" });
+  } catch (error) {
+    console.error("DELETE QUESTION ERROR:", error);
+    res.status(500).json({ error: "Failed to delete question" });
   }
 });
 
