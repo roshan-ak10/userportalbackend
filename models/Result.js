@@ -1,16 +1,17 @@
-// models/Result.js
 const mongoose = require('mongoose');
 
 const resultSchema = new mongoose.Schema({
-  testId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Test', 
-    required: true 
-  },
-  studentName: { type: String, required: true },
-  studentEmail: { type: String, required: true },
-  score: { type: Number, required: true },
-  totalQuestions: { type: Number, required: true },
+  testId: { type: mongoose.Schema.Types.ObjectId, ref: 'Test' },
+  studentName: String,
+  studentEmail: String,
+  score: Number,
+  totalQuestions: Number,
+  // NEW: Store the detailed answer breakdown
+  answers: [{
+    questionText: String,
+    chosenAnswer: String,
+    correctAnswer: String
+  }],
   submittedAt: { type: Date, default: Date.now }
 });
 

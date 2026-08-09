@@ -499,9 +499,10 @@ app.get('/api/questions/:testId', async (req, res) => {
   }
 });
 
-// POST: Save a student's test result
+// POST: Save a student's test result (UPDATED to include detailed answers)
 app.post('/api/results', async (req, res) => {
-  const { testId, studentName, studentEmail, score, totalQuestions } = req.body;
+  // 1. Extract 'answers' from the incoming request body
+  const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
   try {
     const newResult = new Result({
@@ -509,11 +510,12 @@ app.post('/api/results', async (req, res) => {
       studentName,
       studentEmail,
       score,
-      totalQuestions
+      totalQuestions,
+      answers // 2. Save the detailed answers array to MongoDB
     });
     
     await newResult.save();
-    res.status(201).json({ message: "Score saved successfully!" });
+    res.status(201).json({ message: "Score and detailed answers saved successfully!" });
   } catch (error) {
     console.error("SAVE SCORE ERROR:", error);
     res.status(500).json({ error: "Failed to save score" });
@@ -523,6 +525,7 @@ app.post('/api/results', async (req, res) => {
 // GET: Fetch all student results for the Admin Dashboard
 app.get('/api/results', async (req, res) => {
   try {
+    // This will now automatically include the new 'answers' array for each result
     const results = await Result.find()
       .populate('testId', 'testName')
       .sort({ submittedAt: -1 }); 
