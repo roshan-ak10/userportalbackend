@@ -1,6 +1,11 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
+const xlsx = require('xlsx');
+
+// FIX: Renamed this to memoryUpload so it doesn't conflict with Cloudinary below!
+const memoryUpload = multer({ storage: multer.memoryStorage() }); 
+
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
 require('dotenv').config();
@@ -9,8 +14,6 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Test = require('./models/Test');
 const Question = require('./models/Question');
 const SessionLog = require('./models/SessionLog');
-
-// IMPORT YOUR NEW USER MODEL HERE
 const User = require('./models/User'); 
 const Result = require('./models/Result');
 
@@ -99,9 +102,6 @@ app.post('/api/login', async (req, res) => {
     } else {
       return res.status(400).json({ error: "Invalid credentials" });
     }
-    
-    // I deleted the duplicate response that was crashing your server here!
-    
   } catch (error) {
     console.error("LOGIN ERROR:", error); // This prints the exact error in Render logs
     res.status(500).json({ error: "Error logging in" });
@@ -110,21 +110,20 @@ app.post('/api/login', async (req, res) => {
 
 // POST: Create a new test (Admin only)
 app.post('/api/tests', async (req, res) => {
-  // 1. Notice we are extracting totalQuestions here!
   const { testName, durationMinutes, totalQuestions, startTime } = req.body;
 
   try {
     const newTest = new Test({
       testName,
       durationMinutes,
-      totalQuestions, // 2. And we are passing it to the database here!
+      totalQuestions,
       startTime
     });
     
     await newTest.save();
     res.status(201).json({ message: "Test created successfully", test: newTest });
   } catch (error) {
-    console.error("CREATE TEST ERROR:", error); // Logs the exact reason to Render
+    console.error("CREATE TEST ERROR:", error);
     res.status(500).json({ error: "Failed to create test" });
   }
 });
@@ -135,7 +134,7 @@ app.put('/api/tests/:id', async (req, res) => {
     const updatedTest = await Test.findByIdAndUpdate(
       req.params.id, 
       req.body, 
-      { new: true } // Returns the updated document
+      { new: true } 
     );
     if (!updatedTest) return res.status(404).json({ error: "Test not found" });
     res.json({ message: "Test updated successfully", test: updatedTest });
@@ -148,12 +147,9 @@ app.put('/api/tests/:id', async (req, res) => {
 // DELETE: Delete a test AND its questions
 app.delete('/api/tests/:id', async (req, res) => {
   try {
-    // 1. Delete the test
     const deletedTest = await Test.findByIdAndDelete(req.params.id);
     if (!deletedTest) return res.status(404).json({ error: "Test not found" });
     
-    // 2. Delete all questions attached to this test
-    const Question = require('./models/Question'); // Ensure Question model is accessible
     await Question.deleteMany({ testId: req.params.id });
 
     res.json({ message: "Test and associated questions deleted successfully" });
@@ -163,12 +159,11 @@ app.delete('/api/tests/:id', async (req, res) => {
   }
 });
 
-// POST: Add a question to a specific test
+// POST: Add a question to a specific test manually
 app.post('/api/questions', async (req, res) => {
   const { testId, questionText, options, correctAnswer } = req.body;
 
   try {
-    // Basic validation to ensure the admin provided exactly 4 options
     if (!options || options.length !== 4) {
       return res.status(400).json({ error: "Exactly 4 options are required" });
     }
@@ -187,10 +182,45 @@ app.post('/api/questions', async (req, res) => {
   }
 });
 
+// POST: Bulk Upload Questions from Excel (NEW ROUTE)
+// Notice it uses memoryUpload here so it doesn't try to send Excel files to Cloudinary!
+app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    // 1. Read the Excel file from memory
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0]; // Get the first tab
+    const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]); // Convert to JSON
+
+    // 2. Map the columns to your database format
+    const questionsArray = data.map(row => {
+      const keys = Object.keys(row);
+      return {
+        testId: req.params.testId,
+        questionText: String(row[keys[1]]), // 2nd Column: Question
+        options: [
+          String(row[keys[2]]), // 3rd Column: Option 1
+          String(row[keys[3]]), // 4th Column: Option 2
+          String(row[keys[4]]), // 5th Column: Option 3
+          String(row[keys[5]])  // 6th Column: Option 4
+        ],
+        correctAnswer: String(row[keys[6]]) // 7th Column: Correct Answer
+      };
+    });
+
+    // 3. Save all questions instantly
+    await Question.insertMany(questionsArray);
+    res.json({ message: "Questions uploaded successfully!", count: questionsArray.length });
+  } catch (error) {
+    console.error("EXCEL UPLOAD ERROR:", error);
+    res.status(500).json({ error: "Failed to parse Excel file." });
+  }
+});
+
 // GET: Fetch all scheduled tests for the student dashboard
 app.get('/api/tests', async (req, res) => {
   try {
-    // Fetch all tests where isScheduled is true
     const tests = await Test.find({ isScheduled: true });
     res.status(200).json(tests);
   } catch (error) {
@@ -271,7 +301,6 @@ app.post('/api/results', async (req, res) => {
 // GET: Fetch all student results for the Admin Dashboard
 app.get('/api/results', async (req, res) => {
   try {
-    // Fetch all results, get the actual test name, and sort by newest first
     const results = await Result.find()
       .populate('testId', 'testName')
       .sort({ submittedAt: -1 }); 
