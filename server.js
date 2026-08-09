@@ -64,14 +64,14 @@ app.get('/api/users', async (req, res) => {
 
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // Uses standard secure connection
+  port: 587, // Changed from 465 to 587 to bypass Render's firewall
+  secure: false, // MUST be false when using port 587
   auth: {
     user: process.env.EMAIL_USER, 
     pass: process.env.EMAIL_PASS  
   },
   tls: {
-    rejectUnauthorized: false // Helps bypass strict server network firewalls
+    rejectUnauthorized: false
   }
 });
 
