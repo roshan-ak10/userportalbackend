@@ -16,6 +16,8 @@ const Question = require('./models/Question');
 const SessionLog = require('./models/SessionLog');
 const User = require('./models/User'); 
 const Result = require('./models/Result');
+const nodemailer = require('nodemailer');
+const OTP = require('./models/OTP');
 
 const app = express();
 app.use(express.json());
@@ -55,6 +57,73 @@ app.get('/api/users', async (req, res) => {
     res.status(200).json(allUsers);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Set up your email sender (Put your Gmail and App Password in your .env file!)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER, 
+    pass: process.env.EMAIL_PASS  
+  }
+});
+
+// POST: Send OTP and enforce college email domain
+app.post('/api/send-otp', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    // 1. Enforce College Email Restriction
+    const domain = email.split('@')[1];
+    if (domain !== 'sastra.ac.in' && domain !== 'sastra.edu') {
+      return res.status(400).json({ error: "Access restricted. Please use your official university email ID." });
+    }
+
+    // 2. Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return res.status(400).json({ error: "An account with this email already exists." });
+
+    // 3. Generate a 6-digit OTP
+    const generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // 4. Save to database (will auto-delete in 5 minutes)
+    await OTP.findOneAndDelete({ email }); // Clear any old OTPs for this email
+    const newOTP = new OTP({ email, otp: generatedOTP });
+    await newOTP.save();
+
+    // 5. Send the email
+    await transporter.sendMail({
+      from: `"Test Portal Admin" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Your Registration OTP",
+      html: `<h2>Your Verification Code</h2>
+             <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
+             <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
+    });
+
+    res.status(200).json({ message: "OTP sent successfully!" });
+  } catch (error) {
+    console.error("OTP ERROR:", error);
+    res.status(500).json({ error: "Failed to send OTP." });
+  }
+});
+
+// POST: Verify the OTP
+app.post('/api/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
+  
+  try {
+    const record = await OTP.findOne({ email, otp });
+    if (!record) {
+      return res.status(400).json({ error: "Invalid or expired OTP." });
+    }
+    
+    // Once verified, delete it so it can't be used again
+    await OTP.findByIdAndDelete(record._id);
+    res.status(200).json({ message: "Email verified!" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to verify OTP." });
   }
 });
 
@@ -182,45 +251,23 @@ app.post('/api/questions', async (req, res) => {
   }
 });
 
-// POST: Bulk Upload Questions from Excel (UPGRADED WITH RANDOM RANGE)
+// POST: Bulk Upload Questions from Excel (SAVES THE ENTIRE POOL)
 app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    // 1. Fetch the test to see how many questions we need to pick!
-    const test = await Test.findById(req.params.testId);
-    if (!test) return res.status(404).json({ error: "Test not found" });
-
-    // 2. Extract the Range from the frontend request
     const { rangeStart, rangeEnd } = req.body;
-
-    // 3. Read the Excel file
     const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // 4. Slice the data based on the requested range
-    // (Subtract 1 because arrays start at 0. If no range is provided, it uses the whole sheet)
+    // 1. Slice the data based on the requested range
     const startIdx = rangeStart ? Math.max(0, parseInt(rangeStart) - 1) : 0;
     const endIdx = rangeEnd ? Math.min(data.length, parseInt(rangeEnd)) : data.length;
-    
-    let questionPool = data.slice(startIdx, endIdx);
+    const questionPool = data.slice(startIdx, endIdx);
 
-    // 5. Ensure the range is big enough for the test
-    if (questionPool.length < test.totalQuestions) {
-      return res.status(400).json({ 
-        error: `Test requires ${test.totalQuestions} questions, but your selected range only contains ${questionPool.length}.` 
-      });
-    }
-
-    // 6. Randomly SHUFFLE the questions in that pool
-    questionPool = questionPool.sort(() => Math.random() - 0.5);
-
-    // 7. Pick exactly the amount needed for the test
-    const selectedQuestions = questionPool.slice(0, test.totalQuestions);
-
-    // 8. Map to the database format
-    const questionsArray = selectedQuestions.map(row => {
+    // 2. Save the ENTIRE pool to the database (we will pick randomly later)
+    const questionsArray = questionPool.map(row => {
       const keys = Object.keys(row);
       return {
         testId: req.params.testId,
@@ -236,10 +283,39 @@ app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req,
     });
 
     await Question.insertMany(questionsArray);
-    res.json({ message: "Questions uploaded successfully!", count: questionsArray.length });
+    res.json({ message: "Question pool uploaded successfully!", count: questionsArray.length });
   } catch (error) {
     console.error("EXCEL UPLOAD ERROR:", error);
     res.status(500).json({ error: "Failed to parse Excel file." });
+  }
+});
+
+// GET: Generate a randomized exam for a specific student
+app.get('/api/student-exam/:testId', async (req, res) => {
+  try {
+    const test = await Test.findById(req.params.testId);
+    if (!test) return res.status(404).json({ error: "Test not found" });
+
+    // 1. Get ALL questions available in the pool for this test
+    const allQuestions = await Question.find({ testId: req.params.testId });
+
+    // 2. Shuffle the entire pool randomly
+    const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
+
+    // 3. Pick exactly the number of questions the test requires (e.g., 10)
+    const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
+
+    // 4. Shuffle the 4 options inside each of those selected questions!
+    const randomizedExam = selectedQuestions.map(q => {
+      const qObj = q.toObject(); // Convert mongoose document to standard object
+      qObj.options = qObj.options.sort(() => 0.5 - Math.random());
+      return qObj;
+    });
+
+    res.status(200).json(randomizedExam);
+  } catch (error) {
+    console.error("EXAM GENERATION ERROR:", error);
+    res.status(500).json({ error: "Failed to generate exam" });
   }
 });
 
