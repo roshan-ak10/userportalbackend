@@ -196,20 +196,25 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// POST: Create a new test (Admin only)
+// 1. POST: Create a Manual Test
 app.post('/api/tests', async (req, res) => {
-  const { testName, durationMinutes, totalQuestions, startTime } = req.body;
-
+  const { testName, durationMinutes, totalQuestions } = req.body;
   try {
+    const startTime = new Date(); // Current exact time
+    
+    // Math: durationMinutes + 30 minutes grace period, converted to milliseconds
+    const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
+
     const newTest = new Test({
       testName,
       durationMinutes,
       totalQuestions,
-      startTime
+      startTime,
+      endTime
     });
     
     await newTest.save();
-    res.status(201).json({ message: "Test created successfully", test: newTest });
+    res.status(201).json({ test: newTest });
   } catch (error) {
     console.error("CREATE TEST ERROR:", error);
     res.status(500).json({ error: "Failed to create test" });
@@ -259,41 +264,38 @@ app.get('/api/topics', async (req, res) => {
   }
 });
 
-// POST: Generate a test dynamically from the Question Bank
+// 2. POST: Generate Dynamic Test
 app.post('/api/tests/generate', async (req, res) => {
-  const { testName, durationMinutes, startTime, topic, rangeStart, rangeEnd, numQuestions } = req.body;
+  const { testName, durationMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
 
   try {
-    // 1. Calculate how many questions to skip and limit based on the admin's range (e.g., 1 to 20)
     const startIdx = Math.max(0, parseInt(rangeStart) - 1);
     const limitAmount = parseInt(rangeEnd) - startIdx;
-
-    // 2. Fetch that specific slice of questions from the requested topic in the Global Bank
+    
     const poolQuestions = await Question.find({ topic, testId: { $exists: false } })
                                         .skip(startIdx)
                                         .limit(limitAmount);
 
-    // 3. Ensure we actually have enough questions to fulfill the request
     if (poolQuestions.length < parseInt(numQuestions)) {
-      return res.status(400).json({ 
-        error: `Only found ${poolQuestions.length} questions in that range. Please request fewer questions or expand the range.` 
-      });
+      return res.status(400).json({ error: `Only found ${poolQuestions.length} questions in range.` });
     }
 
-    // 4. Shuffle the fetched questions and pick the exact amount requested (e.g., 10)
     const shuffled = poolQuestions.sort(() => 0.5 - Math.random());
     const selectedQuestions = shuffled.slice(0, parseInt(numQuestions));
 
-    // 5. Create the new Test document
+    // Calculate strict timers automatically
+    const startTime = new Date();
+    const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
+
     const newTest = new Test({
       testName,
       durationMinutes,
       totalQuestions: numQuestions,
-      startTime
+      startTime,
+      endTime
     });
     await newTest.save();
 
-    // 6. Duplicate the selected questions and assign them to this new Test ID
     const testQuestions = selectedQuestions.map(q => ({
       testId: newTest._id,
       topic: q.topic,
@@ -301,10 +303,9 @@ app.post('/api/tests/generate', async (req, res) => {
       options: q.options,
       correctAnswer: q.correctAnswer
     }));
-
     await Question.insertMany(testQuestions);
 
-    res.status(201).json({ message: "Test created successfully!", test: newTest });
+    res.status(201).json({ message: "Test created!", test: newTest });
   } catch (error) {
     console.error("GENERATE TEST ERROR:", error);
     res.status(500).json({ error: "Failed to generate dynamic test" });
@@ -499,19 +500,26 @@ app.get('/api/questions/:testId', async (req, res) => {
   }
 });
 
-// POST: Save a student's test result (UPDATED to include detailed answers)
+// POST: Save a student's test result (WITH TIME VALIDATION)
 app.post('/api/results', async (req, res) => {
-  // 1. Extract 'answers' from the incoming request body
   const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
   try {
+    // 1. Find the test to check its strict endTime
+    const test = await Test.findById(testId);
+    if (!test) return res.status(404).json({ error: "Test not found." });
+
+    // 2. Security Check: Is the current time past the strict deadline?
+    const currentTime = new Date();
+    if (currentTime > test.endTime) {
+      return res.status(403).json({ 
+        error: "Test submission rejected. The strict time limit and grace period have expired." 
+      });
+    }
+
+    // 3. Save if valid
     const newResult = new Result({
-      testId,
-      studentName,
-      studentEmail,
-      score,
-      totalQuestions,
-      answers // 2. Save the detailed answers array to MongoDB
+      testId, studentName, studentEmail, score, totalQuestions, answers
     });
     
     await newResult.save();
