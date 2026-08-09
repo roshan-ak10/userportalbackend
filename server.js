@@ -64,15 +64,16 @@ app.get('/api/users', async (req, res) => {
 
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 587, // Changed from 465 to 587 to bypass Render's firewall
-  secure: false, // MUST be false when using port 587
+  port: 587, 
+  secure: false, 
   auth: {
     user: process.env.EMAIL_USER, 
     pass: process.env.EMAIL_PASS  
   },
   tls: {
     rejectUnauthorized: false
-  }
+  },
+  localAddress: '0.0.0.0' // <-- THE SILVER BULLET: Forces the server adapter to use IPv4
 });
 
 // POST: Send OTP and enforce college email domain
