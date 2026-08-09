@@ -247,6 +247,108 @@ app.delete('/api/tests/:id', async (req, res) => {
   }
 });
 
+// GET: Fetch all unique topics available in the Global Question Bank
+app.get('/api/topics', async (req, res) => {
+  try {
+    // Finds all unique topics for questions that do NOT have a testId (Global Bank)
+    const topics = await Question.distinct('topic', { testId: { $exists: false } });
+    res.status(200).json(topics);
+  } catch (error) {
+    console.error("FETCH TOPICS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch topics" });
+  }
+});
+
+// POST: Generate a test dynamically from the Question Bank
+app.post('/api/tests/generate', async (req, res) => {
+  const { testName, durationMinutes, startTime, topic, rangeStart, rangeEnd, numQuestions } = req.body;
+
+  try {
+    // 1. Calculate how many questions to skip and limit based on the admin's range (e.g., 1 to 20)
+    const startIdx = Math.max(0, parseInt(rangeStart) - 1);
+    const limitAmount = parseInt(rangeEnd) - startIdx;
+
+    // 2. Fetch that specific slice of questions from the requested topic in the Global Bank
+    const poolQuestions = await Question.find({ topic, testId: { $exists: false } })
+                                        .skip(startIdx)
+                                        .limit(limitAmount);
+
+    // 3. Ensure we actually have enough questions to fulfill the request
+    if (poolQuestions.length < parseInt(numQuestions)) {
+      return res.status(400).json({ 
+        error: `Only found ${poolQuestions.length} questions in that range. Please request fewer questions or expand the range.` 
+      });
+    }
+
+    // 4. Shuffle the fetched questions and pick the exact amount requested (e.g., 10)
+    const shuffled = poolQuestions.sort(() => 0.5 - Math.random());
+    const selectedQuestions = shuffled.slice(0, parseInt(numQuestions));
+
+    // 5. Create the new Test document
+    const newTest = new Test({
+      testName,
+      durationMinutes,
+      totalQuestions: numQuestions,
+      startTime
+    });
+    await newTest.save();
+
+    // 6. Duplicate the selected questions and assign them to this new Test ID
+    const testQuestions = selectedQuestions.map(q => ({
+      testId: newTest._id,
+      topic: q.topic,
+      questionText: q.questionText,
+      options: q.options,
+      correctAnswer: q.correctAnswer
+    }));
+
+    await Question.insertMany(testQuestions);
+
+    res.status(201).json({ message: "Test created successfully!", test: newTest });
+  } catch (error) {
+    console.error("GENERATE TEST ERROR:", error);
+    res.status(500).json({ error: "Failed to generate dynamic test" });
+  }
+});
+
+// POST: Bulk Upload Questions to the Global Bank (No testId required)
+app.post('/api/questions/bank/bulk', memoryUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    // The admin will send the topic (e.g., "Python") along with the file
+    const { topic } = req.body; 
+    if (!topic) return res.status(400).json({ error: "Topic is required to bank questions." });
+
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    // Map the Excel rows to our new Global Bank format
+    const questionsArray = data.map(row => {
+      const keys = Object.keys(row);
+      return {
+        topic: topic, 
+        // Notice there is no testId here! These wait in the global pool.
+        questionText: String(row[keys[1]]), 
+        options: [
+          String(row[keys[2]]), 
+          String(row[keys[3]]), 
+          String(row[keys[4]]), 
+          String(row[keys[5]])  
+        ],
+        correctAnswer: String(row[keys[6]])
+      };
+    });
+
+    await Question.insertMany(questionsArray);
+    res.json({ message: `Successfully added ${questionsArray.length} questions to the ${topic} bank!` });
+  } catch (error) {
+    console.error("BANK UPLOAD ERROR:", error);
+    res.status(500).json({ error: "Failed to upload to the question bank." });
+  }
+});
+
 // POST: Add a question to a specific test manually
 app.post('/api/questions', async (req, res) => {
   const { testId, questionText, options, correctAnswer } = req.body;
