@@ -99,15 +99,27 @@ app.post('/api/send-otp', async (req, res) => {
     const newOTP = new OTP({ email, otp: generatedOTP });
     await newOTP.save();
 
-    // 5. Send the email USING NODEMAILER
-    await transporter.sendMail({
-      from: `"Test Portal Admin" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Your Registration OTP",
-      html: `<h2>Your Verification Code</h2>
-             <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
-             <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
+    // 5. Send the email using the Google Apps Script HTTP Bridge (Bypasses Render Firewall!)
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbwEb7RWE18ymx49J-vn_9CX4JiIk5CN-ooK5lt813BEGTQGkcZYpOjjVRDzgD7vneQa/exec"; // <-- REPLACE THIS STRING WITH YOUR DEPLOYED WEB APP URL
+
+    const emailResponse = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        to: email,
+        subject: "Your Registration OTP",
+        html: `<h2>Your Verification Code</h2>
+               <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
+               <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
+      })
     });
+
+    const emailResult = await emailResponse.json();
+
+    if (emailResult.error) {
+      console.error("GOOGLE SCRIPT ERROR:", emailResult.error);
+      return res.status(500).json({ error: "Failed to send email via Google Apps Script." });
+    }
 
     res.status(200).json({ message: "OTP sent successfully!" });
   } catch (error) {
