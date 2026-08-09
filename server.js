@@ -7,8 +7,22 @@ const xlsx = require('xlsx');
 const memoryUpload = multer({ storage: multer.memoryStorage() }); 
 const dns = require('dns');                     
 dns.setDefaultResultOrder('ipv4first');
-const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
+
+// --- NODEMAILER SETUP ---
+const nodemailer = require('nodemailer');
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587, 
+  secure: false, 
+  auth: {
+    user: process.env.EMAIL_USER, 
+    pass: process.env.EMAIL_PASS  
+  },
+  tls: {
+    rejectUnauthorized: false
+  },
+  localAddress: '0.0.0.0' // <-- The Render Network Bypass!
+});
 
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
@@ -67,7 +81,7 @@ app.post('/api/send-otp', async (req, res) => {
   const { email } = req.body;
 
   try {
-    // 1. Enforce College Email Restriction
+    // 1. Enforce College Email Restriction (Re-enabled for Production!)
     const domain = email.split('@')[1];
     if (domain !== 'sastra.ac.in' && domain !== 'sastra.edu') {
       return res.status(400).json({ error: "Access restricted. Please use your official university email ID." });
@@ -85,21 +99,15 @@ app.post('/api/send-otp', async (req, res) => {
     const newOTP = new OTP({ email, otp: generatedOTP });
     await newOTP.save();
 
-    // 5. Send the email USING RESEND
-    const { data, error } = await resend.emails.send({
-      from: 'Test Portal Admin <onboarding@resend.dev>',
+    // 5. Send the email USING NODEMAILER
+    await transporter.sendMail({
+      from: `"Test Portal Admin" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Your Registration OTP",
       html: `<h2>Your Verification Code</h2>
              <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
              <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
     });
-
-    // 6. Check if Resend silently failed
-    if (error) {
-      console.error("RESEND ERROR:", error);
-      return res.status(500).json({ error: "Failed to send email via Resend." });
-    }
 
     res.status(200).json({ message: "OTP sent successfully!" });
   } catch (error) {
@@ -171,7 +179,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: "Invalid credentials" });
     }
   } catch (error) {
-    console.error("LOGIN ERROR:", error); // This prints the exact error in Render logs
+    console.error("LOGIN ERROR:", error); 
     res.status(500).json({ error: "Error logging in" });
   }
 });
@@ -265,7 +273,7 @@ app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req,
     const endIdx = rangeEnd ? Math.min(data.length, parseInt(rangeEnd)) : data.length;
     const questionPool = data.slice(startIdx, endIdx);
 
-    // 2. Save the ENTIRE pool to the database (we will pick randomly later)
+    // 2. Save the ENTIRE pool to the database 
     const questionsArray = questionPool.map(row => {
       const keys = Object.keys(row);
       return {
@@ -301,12 +309,12 @@ app.get('/api/student-exam/:testId', async (req, res) => {
     // 2. Shuffle the entire pool randomly
     const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
 
-    // 3. Pick exactly the number of questions the test requires (e.g., 10)
+    // 3. Pick exactly the number of questions the test requires 
     const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
 
-    // 4. Shuffle the 4 options inside each of those selected questions!
+    // 4. Shuffle the 4 options inside each of those selected questions
     const randomizedExam = selectedQuestions.map(q => {
-      const qObj = q.toObject(); // Convert mongoose document to standard object
+      const qObj = q.toObject(); 
       qObj.options = qObj.options.sort(() => 0.5 - Math.random());
       return qObj;
     });
@@ -411,7 +419,6 @@ app.get('/api/results', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch results" });
   }
 });
-
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
