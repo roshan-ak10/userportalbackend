@@ -182,34 +182,59 @@ app.post('/api/questions', async (req, res) => {
   }
 });
 
-// POST: Bulk Upload Questions from Excel (NEW ROUTE)
-// Notice it uses memoryUpload here so it doesn't try to send Excel files to Cloudinary!
+// POST: Bulk Upload Questions from Excel (UPGRADED WITH RANDOM RANGE)
 app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    // 1. Read the Excel file from memory
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0]; // Get the first tab
-    const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]); // Convert to JSON
+    // 1. Fetch the test to see how many questions we need to pick!
+    const test = await Test.findById(req.params.testId);
+    if (!test) return res.status(404).json({ error: "Test not found" });
 
-    // 2. Map the columns to your database format
-    const questionsArray = data.map(row => {
+    // 2. Extract the Range from the frontend request
+    const { rangeStart, rangeEnd } = req.body;
+
+    // 3. Read the Excel file
+    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    // 4. Slice the data based on the requested range
+    // (Subtract 1 because arrays start at 0. If no range is provided, it uses the whole sheet)
+    const startIdx = rangeStart ? Math.max(0, parseInt(rangeStart) - 1) : 0;
+    const endIdx = rangeEnd ? Math.min(data.length, parseInt(rangeEnd)) : data.length;
+    
+    let questionPool = data.slice(startIdx, endIdx);
+
+    // 5. Ensure the range is big enough for the test
+    if (questionPool.length < test.totalQuestions) {
+      return res.status(400).json({ 
+        error: `Test requires ${test.totalQuestions} questions, but your selected range only contains ${questionPool.length}.` 
+      });
+    }
+
+    // 6. Randomly SHUFFLE the questions in that pool
+    questionPool = questionPool.sort(() => Math.random() - 0.5);
+
+    // 7. Pick exactly the amount needed for the test
+    const selectedQuestions = questionPool.slice(0, test.totalQuestions);
+
+    // 8. Map to the database format
+    const questionsArray = selectedQuestions.map(row => {
       const keys = Object.keys(row);
       return {
         testId: req.params.testId,
-        questionText: String(row[keys[1]]), // 2nd Column: Question
+        questionText: String(row[keys[1]]), 
         options: [
-          String(row[keys[2]]), // 3rd Column: Option 1
-          String(row[keys[3]]), // 4th Column: Option 2
-          String(row[keys[4]]), // 5th Column: Option 3
-          String(row[keys[5]])  // 6th Column: Option 4
+          String(row[keys[2]]), 
+          String(row[keys[3]]), 
+          String(row[keys[4]]), 
+          String(row[keys[5]])  
         ],
-        correctAnswer: String(row[keys[6]]) // 7th Column: Correct Answer
+        correctAnswer: String(row[keys[6]])
       };
     });
 
-    // 3. Save all questions instantly
     await Question.insertMany(questionsArray);
     res.json({ message: "Questions uploaded successfully!", count: questionsArray.length });
   } catch (error) {
