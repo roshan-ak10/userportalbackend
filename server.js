@@ -60,12 +60,16 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Set up your email sender (Put your Gmail and App Password in your .env file!)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // Uses standard secure connection
   auth: {
     user: process.env.EMAIL_USER, 
     pass: process.env.EMAIL_PASS  
+  },
+  tls: {
+    rejectUnauthorized: false // Helps bypass strict server network firewalls
   }
 });
 
