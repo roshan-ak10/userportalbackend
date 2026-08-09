@@ -5,8 +5,10 @@ const xlsx = require('xlsx');
 
 // FIX: Renamed this to memoryUpload so it doesn't conflict with Cloudinary below!
 const memoryUpload = multer({ storage: multer.memoryStorage() }); 
-const dns = require('dns');                     // <-- ADD THIS
+const dns = require('dns');                     
 dns.setDefaultResultOrder('ipv4first');
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
@@ -18,7 +20,6 @@ const Question = require('./models/Question');
 const SessionLog = require('./models/SessionLog');
 const User = require('./models/User'); 
 const Result = require('./models/Result');
-const nodemailer = require('nodemailer');
 const OTP = require('./models/OTP');
 
 const app = express();
@@ -49,7 +50,6 @@ const storage = new CloudinaryStorage({
   }
 });
 
-const upload = multer({ storage: storage });
 
 // --- ADMIN ROUTE: GET ALL USERS ---
 app.get('/api/users', async (req, res) => {
@@ -60,20 +60,6 @@ app.get('/api/users', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch users" });
   }
-});
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587, 
-  secure: false, 
-  auth: {
-    user: process.env.EMAIL_USER, 
-    pass: process.env.EMAIL_PASS  
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  localAddress: '0.0.0.0' // <-- THE SILVER BULLET: Forces the server adapter to use IPv4
 });
 
 // POST: Send OTP and enforce college email domain
@@ -99,9 +85,9 @@ app.post('/api/send-otp', async (req, res) => {
     const newOTP = new OTP({ email, otp: generatedOTP });
     await newOTP.save();
 
-    // 5. Send the email
-    await transporter.sendMail({
-      from: `"Test Portal Admin" <${process.env.EMAIL_USER}>`,
+    // 5. Send the email via Resend API
+    await resend.emails.send({
+      from: 'Test Portal Admin <onboarding@resend.dev>',
       to: email,
       subject: "Your Registration OTP",
       html: `<h2>Your Verification Code</h2>

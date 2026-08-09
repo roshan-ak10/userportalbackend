@@ -20,6 +20,7 @@
     "multer": "^2.2.0",
     "multer-storage-cloudinary": "^4.0.0",
     "nodemailer": "^9.0.5",
+    "resend": "^6.18.1",
     "xlsx": "^0.18.5"
   }
 }
