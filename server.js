@@ -85,8 +85,8 @@ app.post('/api/send-otp', async (req, res) => {
     const newOTP = new OTP({ email, otp: generatedOTP });
     await newOTP.save();
 
-    // 5. Send the email via Resend API
-    await resend.emails.send({
+    // 5. Send the email USING RESEND
+    const { data, error } = await resend.emails.send({
       from: 'Test Portal Admin <onboarding@resend.dev>',
       to: email,
       subject: "Your Registration OTP",
@@ -94,6 +94,12 @@ app.post('/api/send-otp', async (req, res) => {
              <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
              <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
     });
+
+    // 6. Check if Resend silently failed
+    if (error) {
+      console.error("RESEND ERROR:", error);
+      return res.status(500).json({ error: "Failed to send email via Resend." });
+    }
 
     res.status(200).json({ message: "OTP sent successfully!" });
   } catch (error) {
