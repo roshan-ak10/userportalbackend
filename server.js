@@ -5,6 +5,8 @@ const xlsx = require('xlsx');
 
 // FIX: Renamed this to memoryUpload so it doesn't conflict with Cloudinary below!
 const memoryUpload = multer({ storage: multer.memoryStorage() }); 
+const dns = require('dns');                     // <-- ADD THIS
+dns.setDefaultResultOrder('ipv4first');
 
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
