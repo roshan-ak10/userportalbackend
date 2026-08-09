@@ -100,7 +100,7 @@ app.post('/api/send-otp', async (req, res) => {
     await newOTP.save();
 
     // 5. Send the email using the Google Apps Script HTTP Bridge (Bypasses Render Firewall!)
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbwEb7RWE18ymx49J-vn_9CX4JiIk5CN-ooK5lt813BEGTQGkcZYpOjjVRDzgD7vneQa/exec"; // <-- REPLACE THIS STRING WITH YOUR DEPLOYED WEB APP URL
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbzO-QawDwPgLgJPJxWKLbrS0xCnPiXAZ1b0phRt_S7aWfUBJOCWMpPcunlsUft5BU4/exec"; // <-- REPLACE THIS STRING WITH YOUR DEPLOYED WEB APP URL
 
     const emailResponse = await fetch(scriptUrl, {
       method: 'POST',
