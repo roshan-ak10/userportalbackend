@@ -471,15 +471,7 @@ app.get('/api/student-exam/:testId', async (req, res) => {
   }
 });
 
-// GET: Fetch all scheduled tests for the student dashboard
-app.get('/api/tests', async (req, res) => {
-  try {
-    const tests = await Test.find({ isScheduled: true });
-    res.status(200).json(tests);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch tests" });
-  }
-});
+
 
 // PUT: Update a specific question
 app.put('/api/questions/:id', async (req, res) => {
@@ -588,26 +580,6 @@ app.get('/api/results', async (req, res) => {
   } catch (error) {
     console.error("FETCH RESULTS ERROR:", error);
     res.status(500).json({ error: "Failed to fetch results" });
-  }
-});
-
-app.get('/api/debug-create-test', async (req, res) => {
-  try {
-    const dummyTest = new Test({
-      testName: "DEBUG TEST",
-      className: "DEBUG CLASS",
-      durationMinutes: 60,
-      totalQuestions: 10,
-      startTime: new Date(),
-      endTime: new Date(Date.now() + 600000)
-    });
-    await dummyTest.save();
-    
-    // Immediately fetch all tests to see if it worked
-    const allTests = await Test.find();
-    res.json({ message: "Dummy test created!", testsFound: allTests });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
