@@ -568,10 +568,26 @@ app.post('/api/results', async (req, res) => {
 // GET: Fetch all tests for the Admin Dashboard
 app.get('/api/tests', async (req, res) => {
   try {
+    // Fetches all tests and puts the newest ones at the top
     const tests = await Test.find().sort({ startTime: -1 });
     res.status(200).json(tests);
   } catch (error) {
+    console.error("FETCH TESTS ERROR:", error);
     res.status(500).json({ error: "Failed to fetch tests" });
+  }
+});
+
+app.get('/api/results', async (req, res) => {
+  try {
+    const results = await Result.find()
+      // Tells MongoDB to attach the Test Name and Class Name to the result
+      .populate('testId', 'testName className') 
+      .sort({ submittedAt: -1 }); 
+      
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("FETCH RESULTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch results" });
   }
 });
 
