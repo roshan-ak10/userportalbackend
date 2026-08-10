@@ -1,3 +1,5 @@
+// Force the server timezone to Indian Standard Time
+process.env.TZ = 'Asia/Kolkata';
 const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
@@ -198,15 +200,14 @@ app.post('/api/login', async (req, res) => {
 
 // 1. POST: Create a Manual Test
 app.post('/api/tests', async (req, res) => {
-  const { testName, durationMinutes, totalQuestions } = req.body;
+  const { testName, className, durationMinutes, totalQuestions } = req.body;
   try {
-    const startTime = new Date(); // Current exact time
-    
-    // Math: durationMinutes + 30 minutes grace period, converted to milliseconds
+    const startTime = new Date(); 
     const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
 
     const newTest = new Test({
       testName,
+      className, // <-- Save Class Name
       durationMinutes,
       totalQuestions,
       startTime,
@@ -216,7 +217,6 @@ app.post('/api/tests', async (req, res) => {
     await newTest.save();
     res.status(201).json({ test: newTest });
   } catch (error) {
-    console.error("CREATE TEST ERROR:", error);
     res.status(500).json({ error: "Failed to create test" });
   }
 });
@@ -289,29 +289,26 @@ app.get('/api/topics', async (req, res) => {
 
 // 2. POST: Generate Dynamic Test
 app.post('/api/tests/generate', async (req, res) => {
-  const { testName, durationMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
+  const { testName, className, durationMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
 
   try {
     const startIdx = Math.max(0, parseInt(rangeStart) - 1);
     const limitAmount = parseInt(rangeEnd) - startIdx;
     
-    const poolQuestions = await Question.find({ topic, testId: { $exists: false } })
-                                        .skip(startIdx)
-                                        .limit(limitAmount);
-
+    const poolQuestions = await Question.find({ topic, testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
     if (poolQuestions.length < parseInt(numQuestions)) {
-      return res.status(400).json({ error: `Only found ${poolQuestions.length} questions in range.` });
+      return res.status(400).json({ error: `Only found ${poolQuestions.length} questions.` });
     }
 
     const shuffled = poolQuestions.sort(() => 0.5 - Math.random());
     const selectedQuestions = shuffled.slice(0, parseInt(numQuestions));
 
-    // Calculate strict timers automatically
     const startTime = new Date();
     const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
 
     const newTest = new Test({
       testName,
+      className, // <-- Save Class Name
       durationMinutes,
       totalQuestions: numQuestions,
       startTime,
@@ -330,7 +327,6 @@ app.post('/api/tests/generate', async (req, res) => {
 
     res.status(201).json({ message: "Test created!", test: newTest });
   } catch (error) {
-    console.error("GENERATE TEST ERROR:", error);
     res.status(500).json({ error: "Failed to generate dynamic test" });
   }
 });
@@ -569,17 +565,16 @@ app.post('/api/results', async (req, res) => {
   }
 });
 
-// GET: Fetch all student results for the Admin Dashboard
+// 3. GET: Fetch all student results
 app.get('/api/results', async (req, res) => {
   try {
-    // This will now automatically include the new 'answers' array for each result
     const results = await Result.find()
-      .populate('testId', 'testName')
+      // <-- Tell MongoDB to fetch the className alongside the testName!
+      .populate('testId', 'testName className') 
       .sort({ submittedAt: -1 }); 
       
     res.status(200).json(results);
   } catch (error) {
-    console.error("FETCH RESULTS ERROR:", error);
     res.status(500).json({ error: "Failed to fetch results" });
   }
 });
