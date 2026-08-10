@@ -575,5 +575,25 @@ app.get('/api/tests', async (req, res) => {
   }
 });
 
+app.get('/api/debug-create-test', async (req, res) => {
+  try {
+    const dummyTest = new Test({
+      testName: "DEBUG TEST",
+      className: "DEBUG CLASS",
+      durationMinutes: 60,
+      totalQuestions: 10,
+      startTime: new Date(),
+      endTime: new Date(Date.now() + 600000)
+    });
+    await dummyTest.save();
+    
+    // Immediately fetch all tests to see if it worked
+    const allTests = await Test.find();
+    res.json({ message: "Dummy test created!", testsFound: allTests });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
