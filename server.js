@@ -568,8 +568,8 @@ app.post('/api/results', async (req, res) => {
 // GET: Fetch all tests for the Admin Dashboard
 app.get('/api/tests', async (req, res) => {
   try {
-    // We removed { isScheduled: true } so the Admin can see all tests
-    // .sort({ startTime: -1 }) puts the most recently created tests at the top
+    // We removed { isScheduled: true } so the Admin can see all tests!
+    // .sort({ startTime: -1 }) puts the newest tests at the top of the list
     const tests = await Test.find().sort({ startTime: -1 });
     res.status(200).json(tests);
   } catch (error) {
