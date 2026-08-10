@@ -237,20 +237,21 @@ app.put('/api/tests/:id', async (req, res) => {
   }
 });
 
-// 1. NEW ROUTE: Fetch available tests for the Student Dashboard
 app.get('/api/tests/student/:email', async (req, res) => {
   try {
     const studentEmail = req.params.email;
     const currentTime = new Date();
 
-    // A. Find all tests where the deadline hasn't passed yet
-    const activeTests = await Test.find({ endTime: { $gt: currentTime } });
+    // STRICT WINDOW: Start time must be in the past (started), End time in the future (not expired)
+    const activeTests = await Test.find({ 
+      startTime: { $lte: currentTime }, 
+      endTime: { $gt: currentTime } 
+    });
 
-    // B. Find all tests this specific student has already submitted
+    // Filter out tests the student has already taken
     const pastResults = await Result.find({ studentEmail });
     const takenTestIds = pastResults.map(r => r.testId.toString());
 
-    // C. Filter out the tests the student has already taken
     const availableTests = activeTests.filter(test => !takenTestIds.includes(test._id.toString()));
 
     res.status(200).json(availableTests);
@@ -431,21 +432,27 @@ app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req,
   }
 });
 
-// GET: Generate a randomized exam for a specific student (THE GATEKEEPER)
 app.get('/api/student-exam/:testId', async (req, res) => {
   const { testId } = req.params;
-  const { email } = req.query; // Added email query parameter
+  const { email } = req.query; 
 
   try {
     const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found" });
 
-    // SECURITY CHECK 1: Is the test expired?
-    if (new Date() > test.endTime) {
+    const currentTime = new Date();
+
+    // SECURITY CHECK 1: Has the test started yet?
+    if (currentTime < test.startTime) {
+      return res.status(403).json({ error: "This test has not started yet. Please wait." });
+    }
+
+    // SECURITY CHECK 2: Is the test expired?
+    if (currentTime > test.endTime) {
       return res.status(403).json({ error: "This test has expired and is no longer available." });
     }
 
-    // SECURITY CHECK 2: Has the student already taken this test?
+    // SECURITY CHECK 3: Has the student already taken this test?
     if (email) {
       const existingResult = await Result.findOne({ testId, studentEmail: email });
       if (existingResult) {
@@ -453,7 +460,7 @@ app.get('/api/student-exam/:testId', async (req, res) => {
       }
     }
 
-    // If they pass the checks, generate the randomized exam!
+    // If they pass all checks, generate the randomized exam!
     const allQuestions = await Question.find({ testId });
     const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
     const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
