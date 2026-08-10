@@ -237,6 +237,29 @@ app.put('/api/tests/:id', async (req, res) => {
   }
 });
 
+// 1. NEW ROUTE: Fetch available tests for the Student Dashboard
+app.get('/api/tests/student/:email', async (req, res) => {
+  try {
+    const studentEmail = req.params.email;
+    const currentTime = new Date();
+
+    // A. Find all tests where the deadline hasn't passed yet
+    const activeTests = await Test.find({ endTime: { $gt: currentTime } });
+
+    // B. Find all tests this specific student has already submitted
+    const pastResults = await Result.find({ studentEmail });
+    const takenTestIds = pastResults.map(r => r.testId.toString());
+
+    // C. Filter out the tests the student has already taken
+    const availableTests = activeTests.filter(test => !takenTestIds.includes(test._id.toString()));
+
+    res.status(200).json(availableTests);
+  } catch (error) {
+    console.error("FETCH STUDENT TESTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch student tests" });
+  }
+});
+
 // DELETE: Delete a test AND its questions
 app.delete('/api/tests/:id', async (req, res) => {
   try {
@@ -412,22 +435,33 @@ app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req,
   }
 });
 
-// GET: Generate a randomized exam for a specific student
+// GET: Generate a randomized exam for a specific student (THE GATEKEEPER)
 app.get('/api/student-exam/:testId', async (req, res) => {
+  const { testId } = req.params;
+  const { email } = req.query; // Added email query parameter
+
   try {
-    const test = await Test.findById(req.params.testId);
+    const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found" });
 
-    // 1. Get ALL questions available in the pool for this test
-    const allQuestions = await Question.find({ testId: req.params.testId });
+    // SECURITY CHECK 1: Is the test expired?
+    if (new Date() > test.endTime) {
+      return res.status(403).json({ error: "This test has expired and is no longer available." });
+    }
 
-    // 2. Shuffle the entire pool randomly
+    // SECURITY CHECK 2: Has the student already taken this test?
+    if (email) {
+      const existingResult = await Result.findOne({ testId, studentEmail: email });
+      if (existingResult) {
+        return res.status(403).json({ error: "You have already completed this test. Multiple attempts are not allowed." });
+      }
+    }
+
+    // If they pass the checks, generate the randomized exam!
+    const allQuestions = await Question.find({ testId });
     const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
-
-    // 3. Pick exactly the number of questions the test requires 
     const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
 
-    // 4. Shuffle the 4 options inside each of those selected questions
     const randomizedExam = selectedQuestions.map(q => {
       const qObj = q.toObject(); 
       qObj.options = qObj.options.sort(() => 0.5 - Math.random());
@@ -500,24 +534,29 @@ app.get('/api/questions/:testId', async (req, res) => {
   }
 });
 
-// POST: Save a student's test result (WITH TIME VALIDATION)
+// POST: Save a student's test result (WITH TIME & DUPLICATE VALIDATION)
 app.post('/api/results', async (req, res) => {
   const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
   try {
-    // 1. Find the test to check its strict endTime
     const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found." });
 
-    // 2. Security Check: Is the current time past the strict deadline?
-    const currentTime = new Date();
-    if (currentTime > test.endTime) {
+    // SECURITY CHECK 1: Strict deadline enforcement
+    if (new Date() > test.endTime) {
       return res.status(403).json({ 
         error: "Test submission rejected. The strict time limit and grace period have expired." 
       });
     }
 
-    // 3. Save if valid
+    // SECURITY CHECK 2: Prevent duplicate submissions
+    const existingResult = await Result.findOne({ testId, studentEmail });
+    if (existingResult) {
+      return res.status(403).json({ 
+        error: "You have already submitted this test. Duplicate submissions are not allowed." 
+      });
+    }
+
     const newResult = new Result({
       testId, studentName, studentEmail, score, totalQuestions, answers
     });
