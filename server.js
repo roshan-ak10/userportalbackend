@@ -565,17 +565,16 @@ app.post('/api/results', async (req, res) => {
   }
 });
 
-// 3. GET: Fetch all student results
-app.get('/api/results', async (req, res) => {
+// GET: Fetch all tests for the Admin Dashboard
+app.get('/api/tests', async (req, res) => {
   try {
-    const results = await Result.find()
-      // <-- Tell MongoDB to fetch the className alongside the testName!
-      .populate('testId', 'testName className') 
-      .sort({ submittedAt: -1 }); 
-      
-    res.status(200).json(results);
+    // We removed { isScheduled: true } so the Admin can see all tests
+    // .sort({ startTime: -1 }) puts the most recently created tests at the top
+    const tests = await Test.find().sort({ startTime: -1 });
+    res.status(200).json(tests);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch results" });
+    console.error("FETCH TESTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch tests" });
   }
 });
 
