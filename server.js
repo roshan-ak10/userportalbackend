@@ -200,14 +200,15 @@ app.post('/api/login', async (req, res) => {
 
 // 1. POST: Create a Manual Test
 app.post('/api/tests', async (req, res) => {
-  const { testName, className, durationMinutes, totalQuestions } = req.body;
+  const { testName, className, durationMinutes, activeWindowMinutes, totalQuestions } = req.body;
   try {
     const startTime = new Date(); 
-    const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
+    // NO MORE +30. It strictly uses what the admin types in the new field.
+    const endTime = new Date(startTime.getTime() + (activeWindowMinutes) * 60000);
 
     const newTest = new Test({
       testName,
-      className, // <-- Save Class Name
+      className,
       durationMinutes,
       totalQuestions,
       startTime,
@@ -290,13 +291,14 @@ app.get('/api/topics', async (req, res) => {
 
 // 2. POST: Generate Dynamic Test
 app.post('/api/tests/generate', async (req, res) => {
-  const { testName, className, durationMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
+  const { testName, className, durationMinutes, activeWindowMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
 
   try {
     const startIdx = Math.max(0, parseInt(rangeStart) - 1);
     const limitAmount = parseInt(rangeEnd) - startIdx;
     
     const poolQuestions = await Question.find({ topic, testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
+    
     if (poolQuestions.length < parseInt(numQuestions)) {
       return res.status(400).json({ error: `Only found ${poolQuestions.length} questions.` });
     }
@@ -305,11 +307,12 @@ app.post('/api/tests/generate', async (req, res) => {
     const selectedQuestions = shuffled.slice(0, parseInt(numQuestions));
 
     const startTime = new Date();
-    const endTime = new Date(startTime.getTime() + (durationMinutes + 30) * 60000);
+    // STRICT END TIME based on the new admin input
+    const endTime = new Date(startTime.getTime() + (activeWindowMinutes) * 60000);
 
     const newTest = new Test({
       testName,
-      className, // <-- Save Class Name
+      className,
       durationMinutes,
       totalQuestions: numQuestions,
       startTime,
