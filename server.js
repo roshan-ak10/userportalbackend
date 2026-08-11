@@ -5,7 +5,6 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const xlsx = require('xlsx');
 
-// FIX: Renamed this to memoryUpload so it doesn't conflict with Cloudinary below!
 const memoryUpload = multer({ storage: multer.memoryStorage() }); 
 const dns = require('dns');                     
 dns.setDefaultResultOrder('ipv4first');
@@ -45,12 +44,11 @@ app.use(cors());
 // Serve the 'uploads' folder publicly
 app.use('/uploads', express.static('uploads')); 
 
-
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("Connected to MongoDB"))
   .catch(err => console.error("MongoDB connection error:", err));
 
-  // Configure Cloudinary with your .env credentials
+// Configure Cloudinary with your .env credentials
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -61,16 +59,18 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'user_portal_profiles', // Creates a folder in your Cloudinary account
+    folder: 'user_portal_profiles', 
     allowed_formats: ['jpg', 'jpeg', 'png', 'webp']
   }
 });
 
+// =========================================================================
+// AUTHENTICATION & USER MANAGEMENT
+// =========================================================================
 
-// --- ADMIN ROUTE: GET ALL USERS ---
+// GET ALL USERS (ADMIN)
 app.get('/api/users', async (req, res) => {
   try {
-    // Fetch all users, but leave out their passwords for security
     const allUsers = await User.find({}, '-password'); 
     res.status(200).json(allUsers);
   } catch (error) {
@@ -78,31 +78,25 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// POST: Send OTP and enforce college email domain
+// POST: Send OTP
 app.post('/api/send-otp', async (req, res) => {
   const { email } = req.body;
-
   try {
-    // 1. Enforce College Email Restriction (Re-enabled for Production!)
     const domain = email.split('@')[1];
     if (domain !== 'sastra.ac.in' && domain !== 'sastra.edu') {
       return res.status(400).json({ error: "Access restricted. Please use your official university email ID." });
     }
 
-    // 2. Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ error: "An account with this email already exists." });
 
-    // 3. Generate a 6-digit OTP
     const generatedOTP = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // 4. Save to database (will auto-delete in 5 minutes)
-    await OTP.findOneAndDelete({ email }); // Clear any old OTPs for this email
+    await OTP.findOneAndDelete({ email }); 
     const newOTP = new OTP({ email, otp: generatedOTP });
     await newOTP.save();
 
-    // 5. Send the email using the Google Apps Script HTTP Bridge (Bypasses Render Firewall!)
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbzO-QawDwPgLgJPJxWKLbrS0xCnPiXAZ1b0phRt_S7aWfUBJOCWMpPcunlsUft5BU4/exec"; // <-- REPLACE THIS STRING WITH YOUR DEPLOYED WEB APP URL
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbzO-QawDwPgLgJPJxWKLbrS0xCnPiXAZ1b0phRt_S7aWfUBJOCWMpPcunlsUft5BU4/exec"; 
 
     const emailResponse = await fetch(scriptUrl, {
       method: 'POST',
@@ -130,17 +124,13 @@ app.post('/api/send-otp', async (req, res) => {
   }
 });
 
-// POST: Verify the OTP
+// POST: Verify OTP
 app.post('/api/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
-  
   try {
     const record = await OTP.findOne({ email, otp });
-    if (!record) {
-      return res.status(400).json({ error: "Invalid or expired OTP." });
-    }
+    if (!record) return res.status(400).json({ error: "Invalid or expired OTP." });
     
-    // Once verified, delete it so it can't be used again
     await OTP.findByIdAndDelete(record._id);
     res.status(200).json({ message: "Email verified!" });
   } catch (error) {
@@ -148,7 +138,7 @@ app.post('/api/verify-otp', async (req, res) => {
   }
 });
 
-//api routes
+// POST: Signup
 app.post('/api/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -157,7 +147,6 @@ app.post('/api/signup', async (req, res) => {
     if (existingUser) return res.status(400).json({ error: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const newUser = new User({ name, email, password: hashedPassword });
     await newUser.save();
     
@@ -167,7 +156,7 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-// --- LOGIN ROUTE ---
+// POST: Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -178,16 +167,14 @@ app.post('/api/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     
     if (isMatch) {
-      // 1. Create the new session log
       const newSession = new SessionLog({ userId: user._id , email:user.email });
       await newSession.save();
 
-      // 2. Send data back AND add 'return' to stop the code here
       return res.json({
         message: "Login successful",
         role: user.role,
         sessionId: newSession._id,
-        name:user.name
+        name: user.name
       });
     } else {
       return res.status(400).json({ error: "Invalid credentials" });
@@ -198,89 +185,13 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 1. POST: Create a Manual Test
-app.post('/api/tests', async (req, res) => {
-  const { testName, className, durationMinutes, activeWindowMinutes, totalQuestions } = req.body;
-  try {
-    const startTime = new Date(); 
-    // NO MORE +30. It strictly uses what the admin types in the new field.
-    const endTime = new Date(startTime.getTime() + (activeWindowMinutes) * 60000);
-
-    const newTest = new Test({
-      testName,
-      className,
-      durationMinutes,
-      totalQuestions,
-      startTime,
-      endTime
-    });
-    
-    await newTest.save();
-    res.status(201).json({ test: newTest });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to create test" });
-  }
-});
-
-// PUT: Update an existing test
-app.put('/api/tests/:id', async (req, res) => {
-  try {
-    const updatedTest = await Test.findByIdAndUpdate(
-      req.params.id, 
-      req.body, 
-      { new: true } 
-    );
-    if (!updatedTest) return res.status(404).json({ error: "Test not found" });
-    res.json({ message: "Test updated successfully", test: updatedTest });
-  } catch (error) {
-    console.error("UPDATE TEST ERROR:", error);
-    res.status(500).json({ error: "Failed to update test" });
-  }
-});
-
-app.get('/api/tests/student/:email', async (req, res) => {
-  try {
-    const studentEmail = req.params.email;
-    const currentTime = new Date();
-
-    // STRICT WINDOW: Start time must be in the past (started), End time in the future (not expired)
-    const activeTests = await Test.find({ 
-      startTime: { $lte: currentTime }, 
-      endTime: { $gt: currentTime } 
-    });
-
-    // Filter out tests the student has already taken
-    const pastResults = await Result.find({ studentEmail });
-    const takenTestIds = pastResults.map(r => r.testId.toString());
-
-    const availableTests = activeTests.filter(test => !takenTestIds.includes(test._id.toString()));
-
-    res.status(200).json(availableTests);
-  } catch (error) {
-    console.error("FETCH STUDENT TESTS ERROR:", error);
-    res.status(500).json({ error: "Failed to fetch student tests" });
-  }
-});
-
-// DELETE: Delete a test AND its questions
-app.delete('/api/tests/:id', async (req, res) => {
-  try {
-    const deletedTest = await Test.findByIdAndDelete(req.params.id);
-    if (!deletedTest) return res.status(404).json({ error: "Test not found" });
-    
-    await Question.deleteMany({ testId: req.params.id });
-
-    res.json({ message: "Test and associated questions deleted successfully" });
-  } catch (error) {
-    console.error("DELETE TEST ERROR:", error);
-    res.status(500).json({ error: "Failed to delete test" });
-  }
-});
+// =========================================================================
+// TEST MANAGEMENT & QUESTION BANK
+// =========================================================================
 
 // GET: Fetch all unique topics available in the Global Question Bank
 app.get('/api/topics', async (req, res) => {
   try {
-    // Finds all unique topics for questions that do NOT have a testId (Global Bank)
     const topics = await Question.distinct('topic', { testId: { $exists: false } });
     res.status(200).json(topics);
   } catch (error) {
@@ -289,59 +200,11 @@ app.get('/api/topics', async (req, res) => {
   }
 });
 
-// 2. POST: Generate Dynamic Test
-app.post('/api/tests/generate', async (req, res) => {
-  const { testName, className, durationMinutes, activeWindowMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
-
-  try {
-    const startIdx = Math.max(0, parseInt(rangeStart) - 1);
-    const limitAmount = parseInt(rangeEnd) - startIdx;
-    
-    const poolQuestions = await Question.find({ topic, testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
-    
-    if (poolQuestions.length < parseInt(numQuestions)) {
-      return res.status(400).json({ error: `Only found ${poolQuestions.length} questions.` });
-    }
-
-    const shuffled = poolQuestions.sort(() => 0.5 - Math.random());
-    const selectedQuestions = shuffled.slice(0, parseInt(numQuestions));
-
-    const startTime = new Date();
-    // STRICT END TIME based on the new admin input
-    const endTime = new Date(startTime.getTime() + (activeWindowMinutes) * 60000);
-
-    const newTest = new Test({
-      testName,
-      className,
-      durationMinutes,
-      totalQuestions: poolQuestions.length, // Total pool available
-      randomQuestionCount: parseInt(numQuestions), // The number shown to students
-      startTime,
-      endTime
-    });
-    await newTest.save();
-
-    const testQuestions = selectedQuestions.map(q => ({
-      testId: newTest._id,
-      topic: q.topic,
-      questionText: q.questionText,
-      options: q.options,
-      correctAnswer: q.correctAnswer
-    }));
-    await Question.insertMany(testQuestions);
-
-    res.status(201).json({ message: "Test created!", test: newTest });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to generate dynamic test" });
-  }
-});
-
-// POST: Bulk Upload Questions to the Global Bank (No testId required)
+// POST: Bulk Upload Questions to the Global Bank
 app.post('/api/questions/bank/bulk', memoryUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    // The admin will send the topic (e.g., "Python") along with the file
     const { topic } = req.body; 
     if (!topic) return res.status(400).json({ error: "Topic is required to bank questions." });
 
@@ -349,12 +212,10 @@ app.post('/api/questions/bank/bulk', memoryUpload.single('file'), async (req, re
     const sheetName = workbook.SheetNames[0];
     const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // Map the Excel rows to our new Global Bank format
     const questionsArray = data.map(row => {
       const keys = Object.keys(row);
       return {
         topic: topic, 
-        // Notice there is no testId here! These wait in the global pool.
         questionText: String(row[keys[1]]), 
         options: [
           String(row[keys[2]]), 
@@ -374,207 +235,93 @@ app.post('/api/questions/bank/bulk', memoryUpload.single('file'), async (req, re
   }
 });
 
-// POST: Add a question to a specific test manually
-app.post('/api/questions', async (req, res) => {
-  const { testId, questionText, options, correctAnswer } = req.body;
+// POST: Generate Dynamic Test
+app.post('/api/tests/generate', async (req, res) => {
+  const { testName, className, durationMinutes, activeWindowMinutes, topic, rangeStart, rangeEnd, numQuestions } = req.body;
 
   try {
-    if (!options || options.length !== 4) {
-      return res.status(400).json({ error: "Exactly 4 options are required" });
+    const startIdx = Math.max(0, parseInt(rangeStart) - 1);
+    const limitAmount = parseInt(rangeEnd) - startIdx;
+    
+    const poolQuestions = await Question.find({ topic, testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
+    
+    if (poolQuestions.length < parseInt(numQuestions)) {
+      return res.status(400).json({ error: `Only found ${poolQuestions.length} questions in this range.` });
     }
 
-    const newQuestion = new Question({
-      testId,
-      questionText,
-      options,
-      correctAnswer
-    });
+    const startTime = new Date();
+    const endTime = new Date(startTime.getTime() + (activeWindowMinutes) * 60000);
 
-    await newQuestion.save();
-    res.status(201).json({ message: "Question added successfully" });
+    const newTest = new Test({
+      testName,
+      className,
+      durationMinutes,
+      totalQuestions: poolQuestions.length, 
+      randomQuestionCount: parseInt(numQuestions), 
+      startTime,
+      endTime
+    });
+    await newTest.save();
+
+    const testQuestions = poolQuestions.map(q => ({
+      testId: newTest._id,
+      topic: q.topic,
+      questionText: q.questionText,
+      options: q.options,
+      correctAnswer: q.correctAnswer
+    }));
+    await Question.insertMany(testQuestions);
+
+    res.status(201).json({ message: "Test created! Pool ready for randomization.", test: newTest });
   } catch (error) {
-    res.status(500).json({ error: "Failed to add question" });
+    res.status(500).json({ error: "Failed to generate dynamic test" });
   }
 });
 
-// POST: Bulk Upload Questions from Excel (SAVES THE ENTIRE POOL)
-app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req, res) => {
+// GET: Fetch all tests for the Admin Dashboard
+app.get('/api/tests', async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const { rangeStart, rangeEnd } = req.body;
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const data = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-
-    // 1. Slice the data based on the requested range
-    const startIdx = rangeStart ? Math.max(0, parseInt(rangeStart) - 1) : 0;
-    const endIdx = rangeEnd ? Math.min(data.length, parseInt(rangeEnd)) : data.length;
-    const questionPool = data.slice(startIdx, endIdx);
-
-    // 2. Save the ENTIRE pool to the database 
-    const questionsArray = questionPool.map(row => {
-      const keys = Object.keys(row);
-      return {
-        testId: req.params.testId,
-        questionText: String(row[keys[1]]), 
-        options: [
-          String(row[keys[2]]), 
-          String(row[keys[3]]), 
-          String(row[keys[4]]), 
-          String(row[keys[5]])  
-        ],
-        correctAnswer: String(row[keys[6]])
-      };
-    });
-
-    await Question.insertMany(questionsArray);
-    res.json({ message: "Question pool uploaded successfully!", count: questionsArray.length });
+    const tests = await Test.find().sort({ startTime: -1 });
+    res.status(200).json(tests);
   } catch (error) {
-    console.error("EXCEL UPLOAD ERROR:", error);
-    res.status(500).json({ error: "Failed to parse Excel file." });
+    console.error("FETCH TESTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch tests" });
   }
 });
 
-// GET: Old route for fetching an exam (Kept for fallback purposes)
-app.get('/api/student-exam/:testId', async (req, res) => {
-  const { testId } = req.params;
-  const { email } = req.query; 
-
+// PUT: Update an existing test
+app.put('/api/tests/:id', async (req, res) => {
   try {
-    const test = await Test.findById(testId);
-    if (!test) return res.status(404).json({ error: "Test not found" });
-
-    const currentTime = new Date();
-
-    // SECURITY CHECK 1: Has the test started yet?
-    if (currentTime < test.startTime) {
-      return res.status(403).json({ error: "This test has not started yet. Please wait." });
-    }
-
-    // SECURITY CHECK 2: Is the test expired?
-    if (currentTime > test.endTime) {
-      return res.status(403).json({ error: "This test has expired and is no longer available." });
-    }
-
-    // SECURITY CHECK 3: Has the student already taken this test?
-    if (email) {
-      const existingResult = await Result.findOne({ testId, studentEmail: email });
-      if (existingResult) {
-        return res.status(403).json({ error: "You have already completed this test. Multiple attempts are not allowed." });
-      }
-    }
-
-    const allQuestions = await Question.find({ testId });
-    const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
-    const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
-
-    const randomizedExam = selectedQuestions.map(q => {
-      const qObj = q.toObject(); 
-      qObj.options = qObj.options.sort(() => 0.5 - Math.random());
-      return qObj;
-    });
-
-    res.status(200).json(randomizedExam);
-  } catch (error) {
-    console.error("EXAM GENERATION ERROR:", error);
-    res.status(500).json({ error: "Failed to generate exam" });
-  }
-});
-
-// =========================================================================
-// NEW ROUTE: START TEST WITH RANDOMIZED QUESTION POOL
-// =========================================================================
-app.get('/api/start-test/:testId', async (req, res) => {
-  const { testId } = req.params;
-  const { email } = req.query; 
-
-  try {
-    const test = await Test.findById(testId);
-    if (!test) return res.status(404).json({ message: "Test not found" });
-
-    const currentTime = new Date();
-
-    // SECURITY CHECK 1: Has the test started yet?
-    if (currentTime < test.startTime) {
-      return res.status(403).json({ message: "This test has not started yet. Please wait." });
-    }
-
-    // SECURITY CHECK 2: Is the test expired?
-    if (currentTime > test.endTime) {
-      return res.status(403).json({ message: "This test has expired and is no longer available." });
-    }
-
-    // SECURITY CHECK 3: Has the student already taken this test?
-    if (email) {
-      const existingResult = await Result.findOne({ testId, studentEmail: email });
-      if (existingResult) {
-        return res.status(403).json({ message: "You have already completed this test. Multiple attempts are not allowed." });
-      }
-    }
-
-    // 1. Fetch ALL questions currently assigned to this test pool
-    let allQuestions = await Question.find({ testId });
-
-    // 2. Shuffle the array randomly (Fisher-Yates)
-    for (let i = allQuestions.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [allQuestions[i], allQuestions[j]] = [allQuestions[j], allQuestions[i]];
-    }
-
-    // 3. Slice the array down to the requested random amount (Fallback to total if missing)
-    const limit = test.randomQuestionCount || test.totalQuestions;
-    const selectedQuestions = allQuestions.slice(0, limit);
-
-    // 4. Shuffle the options within each selected question so the correct answer moves
-    const randomizedExam = selectedQuestions.map(q => {
-      const qObj = q.toObject(); 
-      qObj.options = qObj.options.sort(() => 0.5 - Math.random());
-      return qObj;
-    });
-
-    // 5. Send the securely randomized subset back to the student's phone
-    res.status(200).json({
-      _id: test._id,
-      testName: test.testName,
-      durationMinutes: test.durationMinutes,
-      questions: randomizedExam 
-    });
-
-  } catch (error) {
-    console.error("START TEST ERROR:", error);
-    res.status(500).json({ message: "Server error generating random test." });
-  }
-});
-// =========================================================================
-
-// PUT: Update a specific question
-app.put('/api/questions/:id', async (req, res) => {
-  try {
-    const updatedQuestion = await Question.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
+    const updatedTest = await Test.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true } 
     );
-    if (!updatedQuestion) return res.status(404).json({ error: "Question not found" });
-    res.json({ message: "Question updated successfully", question: updatedQuestion });
+    if (!updatedTest) return res.status(404).json({ error: "Test not found" });
+    res.json({ message: "Test updated successfully", test: updatedTest });
   } catch (error) {
-    console.error("UPDATE QUESTION ERROR:", error);
-    res.status(500).json({ error: "Failed to update question" });
+    console.error("UPDATE TEST ERROR:", error);
+    res.status(500).json({ error: "Failed to update test" });
   }
 });
 
-// DELETE: Delete a specific question
-app.delete('/api/questions/:id', async (req, res) => {
+// DELETE: Delete a test AND its questions
+app.delete('/api/tests/:id', async (req, res) => {
   try {
-    const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
-    if (!deletedQuestion) return res.status(404).json({ error: "Question not found" });
-    res.json({ message: "Question deleted successfully" });
+    const deletedTest = await Test.findByIdAndDelete(req.params.id);
+    if (!deletedTest) return res.status(404).json({ error: "Test not found" });
+    
+    await Question.deleteMany({ testId: req.params.id });
+    res.json({ message: "Test and associated questions deleted successfully" });
   } catch (error) {
-    console.error("DELETE QUESTION ERROR:", error);
-    res.status(500).json({ error: "Failed to delete question" });
+    console.error("DELETE TEST ERROR:", error);
+    res.status(500).json({ error: "Failed to delete test" });
   }
 });
+
+// =========================================================================
+// EXAM TAKING & SUBMISSION (STUDENT FACING)
+// =========================================================================
 
 // GET: Fetch a single test's details (for the timer)
 app.get('/api/tests/:id', async (req, res) => {
@@ -587,17 +334,84 @@ app.get('/api/tests/:id', async (req, res) => {
   }
 });
 
-// GET: Fetch all questions for a specific test
-app.get('/api/questions/:testId', async (req, res) => {
+// GET: Fetch tests available for a specific student
+app.get('/api/tests/student/:email', async (req, res) => {
   try {
-    const questions = await Question.find({ testId: req.params.testId });
-    res.status(200).json(questions);
+    const studentEmail = req.params.email;
+    const currentTime = new Date();
+
+    const activeTests = await Test.find({ 
+      startTime: { $lte: currentTime }, 
+      endTime: { $gt: currentTime } 
+    });
+
+    const pastResults = await Result.find({ studentEmail });
+    const takenTestIds = pastResults.map(r => r.testId.toString());
+    const availableTests = activeTests.filter(test => !takenTestIds.includes(test._id.toString()));
+
+    res.status(200).json(availableTests);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch questions" });
+    console.error("FETCH STUDENT TESTS ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch student tests" });
   }
 });
 
-// POST: Save a student's test result (WITH TIME & DUPLICATE VALIDATION)
+// GET: START TEST WITH RANDOMIZED QUESTION POOL
+app.get('/api/start-test/:testId', async (req, res) => {
+  const { testId } = req.params;
+  const { email } = req.query; 
+
+  try {
+    const test = await Test.findById(testId);
+    if (!test) return res.status(404).json({ message: "Test not found" });
+
+    const currentTime = new Date();
+
+    if (currentTime < test.startTime) {
+      return res.status(403).json({ message: "This test has not started yet. Please wait." });
+    }
+
+    if (currentTime > test.endTime) {
+      return res.status(403).json({ message: "This test has expired and is no longer available." });
+    }
+
+    if (email) {
+      const existingResult = await Result.findOne({ testId, studentEmail: email });
+      if (existingResult) {
+        return res.status(403).json({ message: "You have already completed this test. Multiple attempts are not allowed." });
+      }
+    }
+
+    let allQuestions = await Question.find({ testId });
+
+    for (let i = allQuestions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allQuestions[i], allQuestions[j]] = [allQuestions[j], allQuestions[i]];
+    }
+
+    const limit = test.randomQuestionCount || test.totalQuestions;
+    const selectedQuestions = allQuestions.slice(0, limit);
+
+    const randomizedExam = selectedQuestions.map(q => {
+      const qObj = q.toObject(); 
+      qObj.options = qObj.options.sort(() => 0.5 - Math.random());
+      return qObj;
+    });
+
+    res.status(200).json({
+      _id: test._id,
+      testName: test.testName,
+      durationMinutes: test.durationMinutes,
+      questions: randomizedExam 
+    });
+
+  } catch (error) {
+    console.error("START TEST ERROR:", error);
+    res.status(500).json({ message: "Server error generating random test." });
+  }
+});
+
+// POST: Save a student's test result
 app.post('/api/results', async (req, res) => {
   const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
@@ -605,14 +419,12 @@ app.post('/api/results', async (req, res) => {
     const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found." });
 
-    // SECURITY CHECK 1: Strict deadline enforcement
     if (new Date() > test.endTime) {
       return res.status(403).json({ 
         error: "Test submission rejected. The strict time limit and grace period have expired." 
       });
     }
 
-    // SECURITY CHECK 2: Prevent duplicate submissions
     const existingResult = await Result.findOne({ testId, studentEmail });
     if (existingResult) {
       return res.status(403).json({ 
@@ -632,22 +444,10 @@ app.post('/api/results', async (req, res) => {
   }
 });
 
-// GET: Fetch all tests for the Admin Dashboard
-app.get('/api/tests', async (req, res) => {
-  try {
-    // Fetches all tests and puts the newest ones at the top
-    const tests = await Test.find().sort({ startTime: -1 });
-    res.status(200).json(tests);
-  } catch (error) {
-    console.error("FETCH TESTS ERROR:", error);
-    res.status(500).json({ error: "Failed to fetch tests" });
-  }
-});
-
+// GET: Fetch all results (Admin)
 app.get('/api/results', async (req, res) => {
   try {
     const results = await Result.find()
-      // Tells MongoDB to attach the Test Name and Class Name to the result
       .populate('testId', 'testName className') 
       .sort({ submittedAt: -1 }); 
       
