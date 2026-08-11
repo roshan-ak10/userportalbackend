@@ -314,7 +314,8 @@ app.post('/api/tests/generate', async (req, res) => {
       testName,
       className,
       durationMinutes,
-      totalQuestions: numQuestions,
+      totalQuestions: poolQuestions.length, // Total pool available
+      randomQuestionCount: parseInt(numQuestions), // The number shown to students
       startTime,
       endTime
     });
@@ -435,6 +436,7 @@ app.post('/api/questions/bulk/:testId', memoryUpload.single('file'), async (req,
   }
 });
 
+// GET: Old route for fetching an exam (Kept for fallback purposes)
 app.get('/api/student-exam/:testId', async (req, res) => {
   const { testId } = req.params;
   const { email } = req.query; 
@@ -463,7 +465,6 @@ app.get('/api/student-exam/:testId', async (req, res) => {
       }
     }
 
-    // If they pass all checks, generate the randomized exam!
     const allQuestions = await Question.find({ testId });
     const shuffledPool = allQuestions.sort(() => 0.5 - Math.random());
     const selectedQuestions = shuffledPool.slice(0, test.totalQuestions);
@@ -481,7 +482,71 @@ app.get('/api/student-exam/:testId', async (req, res) => {
   }
 });
 
+// =========================================================================
+// NEW ROUTE: START TEST WITH RANDOMIZED QUESTION POOL
+// =========================================================================
+app.get('/api/start-test/:testId', async (req, res) => {
+  const { testId } = req.params;
+  const { email } = req.query; 
 
+  try {
+    const test = await Test.findById(testId);
+    if (!test) return res.status(404).json({ message: "Test not found" });
+
+    const currentTime = new Date();
+
+    // SECURITY CHECK 1: Has the test started yet?
+    if (currentTime < test.startTime) {
+      return res.status(403).json({ message: "This test has not started yet. Please wait." });
+    }
+
+    // SECURITY CHECK 2: Is the test expired?
+    if (currentTime > test.endTime) {
+      return res.status(403).json({ message: "This test has expired and is no longer available." });
+    }
+
+    // SECURITY CHECK 3: Has the student already taken this test?
+    if (email) {
+      const existingResult = await Result.findOne({ testId, studentEmail: email });
+      if (existingResult) {
+        return res.status(403).json({ message: "You have already completed this test. Multiple attempts are not allowed." });
+      }
+    }
+
+    // 1. Fetch ALL questions currently assigned to this test pool
+    let allQuestions = await Question.find({ testId });
+
+    // 2. Shuffle the array randomly (Fisher-Yates)
+    for (let i = allQuestions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allQuestions[i], allQuestions[j]] = [allQuestions[j], allQuestions[i]];
+    }
+
+    // 3. Slice the array down to the requested random amount (Fallback to total if missing)
+    const limit = test.randomQuestionCount || test.totalQuestions;
+    const selectedQuestions = allQuestions.slice(0, limit);
+
+    // 4. Shuffle the options within each selected question so the correct answer moves
+    const randomizedExam = selectedQuestions.map(q => {
+      const qObj = q.toObject(); 
+      qObj.options = qObj.options.sort(() => 0.5 - Math.random());
+      return qObj;
+    });
+
+    // 5. Send the securely randomized subset back to the student's phone
+    res.status(200).json({
+      _id: test._id,
+      testName: test.testName,
+      durationMinutes: test.durationMinutes,
+      questions: randomizedExam 
+    });
+
+  } catch (error) {
+    console.error("START TEST ERROR:", error);
+    res.status(500).json({ message: "Server error generating random test." });
+  }
+});
+// =========================================================================
 
 // PUT: Update a specific question
 app.put('/api/questions/:id', async (req, res) => {
