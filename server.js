@@ -31,7 +31,8 @@ require('dotenv').config();
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Test = require('./models/Test');
-const Question = require('./models/Question');
+// --- UPDATED: Import the dynamic generator instead of the static model ---
+const getQuestionModel = require('./models/Question');
 const SessionLog = require('./models/SessionLog');
 const User = require('./models/User'); 
 const Result = require('./models/Result');
@@ -68,7 +69,6 @@ const storage = new CloudinaryStorage({
 // AUTHENTICATION & USER MANAGEMENT
 // =========================================================================
 
-// GET ALL USERS (ADMIN)
 app.get('/api/users', async (req, res) => {
   try {
     const allUsers = await User.find({}, '-password'); 
@@ -78,7 +78,6 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// POST: Send OTP
 app.post('/api/send-otp', async (req, res) => {
   const { email } = req.body;
   try {
@@ -124,7 +123,6 @@ app.post('/api/send-otp', async (req, res) => {
   }
 });
 
-// POST: Verify OTP
 app.post('/api/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   try {
@@ -138,7 +136,6 @@ app.post('/api/verify-otp', async (req, res) => {
   }
 });
 
-// POST: Signup
 app.post('/api/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -156,7 +153,6 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-// POST: Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -186,13 +182,21 @@ app.post('/api/login', async (req, res) => {
 });
 
 // =========================================================================
-// TEST MANAGEMENT & QUESTION BANK
+// TEST MANAGEMENT & QUESTION BANK (DYNAMIC COLLECTIONS)
 // =========================================================================
 
 // GET: Fetch all unique topics available in the Global Question Bank
 app.get('/api/topics', async (req, res) => {
   try {
-    const topics = await Question.distinct('topic', { testId: { $exists: false } });
+    // 1. Scan MongoDB for all active collections
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    
+    // 2. Filter out standard tables and system tables to isolate dynamic topic tables
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const topics = collections
+      .map(col => col.name)
+      .filter(name => !standardModels.includes(name) && !name.startsWith('system.'));
+
     res.status(200).json(topics);
   } catch (error) {
     console.error("FETCH TOPICS ERROR:", error);
@@ -227,11 +231,41 @@ app.post('/api/questions/bank/bulk', memoryUpload.single('file'), async (req, re
       };
     });
 
-    await Question.insertMany(questionsArray);
-    res.json({ message: `Successfully added ${questionsArray.length} questions to the ${topic} bank!` });
+    // --- DYNAMIC INJECTION: Save straight to the unique topic table ---
+    const DynamicCollection = getQuestionModel(topic);
+    await DynamicCollection.insertMany(questionsArray);
+
+    res.json({ message: `Successfully added ${questionsArray.length} questions to the ${topic} table!` });
   } catch (error) {
     console.error("BANK UPLOAD ERROR:", error);
     res.status(500).json({ error: "Failed to upload to the question bank." });
+  }
+});
+
+// POST: Add a single question manually to a specific topic table
+app.post('/api/questions/bank/single', async (req, res) => {
+  try {
+    const { topic, questionText, options, correctAnswer } = req.body;
+    
+    if (!topic || !questionText || !options || options.length !== 4 || !correctAnswer) {
+      return res.status(400).json({ error: "Please fill out all fields completely." });
+    }
+
+    // --- DYNAMIC INJECTION: Find or create the topic table ---
+    const DynamicCollection = getQuestionModel(topic);
+    
+    const newQuestion = new DynamicCollection({
+      topic,
+      questionText,
+      options,
+      correctAnswer
+    });
+
+    await newQuestion.save();
+    res.status(201).json({ message: `Question successfully added to '${topic}'!` });
+  } catch (error) {
+    console.error("SINGLE UPLOAD ERROR:", error);
+    res.status(500).json({ error: "Failed to add manual question." });
   }
 });
 
@@ -243,7 +277,9 @@ app.post('/api/tests/generate', async (req, res) => {
     const startIdx = Math.max(0, parseInt(rangeStart) - 1);
     const limitAmount = parseInt(rangeEnd) - startIdx;
     
-    const poolQuestions = await Question.find({ topic, testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
+    // --- DYNAMIC INJECTION: Pull from the specific topic table ---
+    const DynamicCollection = getQuestionModel(topic);
+    const poolQuestions = await DynamicCollection.find({ testId: { $exists: false } }).skip(startIdx).limit(limitAmount);
     
     if (poolQuestions.length < parseInt(numQuestions)) {
       return res.status(400).json({ error: `Only found ${poolQuestions.length} questions in this range.` });
@@ -270,7 +306,9 @@ app.post('/api/tests/generate', async (req, res) => {
       options: q.options,
       correctAnswer: q.correctAnswer
     }));
-    await Question.insertMany(testQuestions);
+    
+    // --- DYNAMIC INJECTION: Save test-specific questions back into the topic table ---
+    await DynamicCollection.insertMany(testQuestions);
 
     res.status(201).json({ message: "Test created! Pool ready for randomization.", test: newTest });
   } catch (error) {
@@ -278,7 +316,6 @@ app.post('/api/tests/generate', async (req, res) => {
   }
 });
 
-// GET: Fetch all tests for the Admin Dashboard
 app.get('/api/tests', async (req, res) => {
   try {
     const tests = await Test.find().sort({ startTime: -1 });
@@ -289,7 +326,6 @@ app.get('/api/tests', async (req, res) => {
   }
 });
 
-// PUT: Update an existing test
 app.put('/api/tests/:id', async (req, res) => {
   try {
     const updatedTest = await Test.findByIdAndUpdate(
@@ -305,13 +341,22 @@ app.put('/api/tests/:id', async (req, res) => {
   }
 });
 
-// DELETE: Delete a test AND its questions
+// DELETE: Delete a test AND its questions across all tables
 app.delete('/api/tests/:id', async (req, res) => {
   try {
     const deletedTest = await Test.findByIdAndDelete(req.params.id);
     if (!deletedTest) return res.status(404).json({ error: "Test not found" });
     
-    await Question.deleteMany({ testId: req.params.id });
+    // --- DYNAMIC SCANNER: Search all topic tables and delete the questions ---
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const topicCollections = collections.filter(c => !standardModels.includes(c.name) && !c.name.startsWith('system.'));
+
+    for (let col of topicCollections) {
+      const DynamicModel = getQuestionModel(col.name);
+      await DynamicModel.deleteMany({ testId: req.params.id });
+    }
+
     res.json({ message: "Test and associated questions deleted successfully" });
   } catch (error) {
     console.error("DELETE TEST ERROR:", error);
@@ -323,7 +368,6 @@ app.delete('/api/tests/:id', async (req, res) => {
 // EXAM TAKING & SUBMISSION (STUDENT FACING)
 // =========================================================================
 
-// GET: Fetch a single test's details (for the timer)
 app.get('/api/tests/:id', async (req, res) => {
   try {
     const test = await Test.findById(req.params.id);
@@ -334,7 +378,6 @@ app.get('/api/tests/:id', async (req, res) => {
   }
 });
 
-// GET: Fetch tests available for a specific student
 app.get('/api/tests/student/:email', async (req, res) => {
   try {
     const studentEmail = req.params.email;
@@ -382,7 +425,20 @@ app.get('/api/start-test/:testId', async (req, res) => {
       }
     }
 
-    let allQuestions = await Question.find({ testId });
+    // --- DYNAMIC SCANNER: Find the table holding this test's questions ---
+    let allQuestions = [];
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const topicCollections = collections.filter(c => !standardModels.includes(c.name) && !c.name.startsWith('system.'));
+
+    for (let col of topicCollections) {
+      const DynamicModel = getQuestionModel(col.name);
+      const questions = await DynamicModel.find({ testId });
+      if (questions.length > 0) {
+        allQuestions = questions;
+        break; // Stop looking, we found the right table!
+      }
+    }
 
     for (let i = allQuestions.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -411,7 +467,6 @@ app.get('/api/start-test/:testId', async (req, res) => {
   }
 });
 
-// POST: Save a student's test result
 app.post('/api/results', async (req, res) => {
   const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
@@ -444,7 +499,6 @@ app.post('/api/results', async (req, res) => {
   }
 });
 
-// GET: Fetch all results (Admin)
 app.get('/api/results', async (req, res) => {
   try {
     const results = await Result.find()
