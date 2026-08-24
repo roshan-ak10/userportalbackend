@@ -38,6 +38,15 @@ const User = require('./models/User');
 const Result = require('./models/Result');
 const OTP = require('./models/OTP');
 
+// --- NEW: INLINE ATTEMPT LOG MODEL FOR SERVER TIMER ---
+const attemptSchema = new mongoose.Schema({
+  testId: String,
+  studentEmail: String,
+  forcedEndTime: Date
+});
+const AttemptLog = mongoose.models.AttemptLog || mongoose.model('AttemptLog', attemptSchema);
+// ------------------------------------------------------
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -163,13 +172,17 @@ app.post('/api/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     
     if (isMatch) {
+      // --- NEW: DESTROY PREVIOUS SESSIONS ---
+      // This enforces single-device login. If they log in on a new phone, the old phone loses its ticket!
+      await SessionLog.deleteMany({ email: user.email });
+
       const newSession = new SessionLog({ userId: user._id , email:user.email });
       await newSession.save();
 
       return res.json({
         message: "Login successful",
         role: user.role,
-        sessionId: newSession._id,
+        sessionId: newSession._id, // This is their Golden Ticket
         name: user.name
       });
     } else {
@@ -192,7 +205,7 @@ app.get('/api/topics', async (req, res) => {
     const collections = await mongoose.connection.db.listCollections().toArray();
     
     // 2. Filter out standard tables and system tables to isolate dynamic topic tables
-    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps', 'attemptlogs'];
     const topics = collections
       .map(col => col.name)
       .filter(name => !standardModels.includes(name) && !name.startsWith('system.'));
@@ -349,7 +362,7 @@ app.delete('/api/tests/:id', async (req, res) => {
     
     // --- DYNAMIC SCANNER: Search all topic tables and delete the questions ---
     const collections = await mongoose.connection.db.listCollections().toArray();
-    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps', 'attemptlogs'];
     const topicCollections = collections.filter(c => !standardModels.includes(c.name) && !c.name.startsWith('system.'));
 
     for (let col of topicCollections) {
@@ -418,17 +431,47 @@ app.get('/api/start-test/:testId', async (req, res) => {
       return res.status(403).json({ message: "This test has expired and is no longer available." });
     }
 
+    let remainingSeconds = test.durationMinutes * 60;
+
     if (email) {
+
+      if (!sessionId) {
+         return res.status(403).json({ message: "Security error: Session missing. Please log in again." });
+      }
+      const activeSession = await SessionLog.findById(sessionId);
+      if (!activeSession) {
+         return res.status(403).json({ message: "Security Alert: You logged in from another device. Exam access denied." });
+      }
+
       const existingResult = await Result.findOne({ testId, studentEmail: email });
       if (existingResult) {
         return res.status(403).json({ message: "You have already completed this test. Multiple attempts are not allowed." });
       }
+
+      // --- NEW: SERVER-SIDE TIMER START LOGIC ---
+      let attempt = await AttemptLog.findOne({ testId, studentEmail: email });
+      if (!attempt) {
+        attempt = new AttemptLog({
+          testId,
+          studentEmail: email,
+          forcedEndTime: new Date(Date.now() + (test.durationMinutes * 60000))
+        });
+        await attempt.save();
+      }
+
+      // Calculate exact remaining time based on Server Clock
+      const remainingMilliseconds = attempt.forcedEndTime.getTime() - Date.now();
+      if (remainingMilliseconds <= 0) {
+        return res.status(403).json({ message: "Your time for this exam has already expired." });
+      }
+      remainingSeconds = Math.floor(remainingMilliseconds / 1000);
+      // ------------------------------------------
     }
 
     // --- DYNAMIC SCANNER: Find the table holding this test's questions ---
     let allQuestions = [];
     const collections = await mongoose.connection.db.listCollections().toArray();
-    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps'];
+    const standardModels = ['tests', 'sessionlogs', 'users', 'results', 'otps', 'attemptlogs'];
     const topicCollections = collections.filter(c => !standardModels.includes(c.name) && !c.name.startsWith('system.'));
 
     for (let col of topicCollections) {
@@ -457,6 +500,7 @@ app.get('/api/start-test/:testId', async (req, res) => {
     res.status(200).json({
       _id: test._id,
       testName: test.testName,
+      remainingSeconds: remainingSeconds, // Sends the SECURE time limit
       durationMinutes: test.durationMinutes,
       questions: randomizedExam 
     });
@@ -474,11 +518,32 @@ app.post('/api/results', async (req, res) => {
     const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found." });
 
+    if (!sessionId) {
+       return res.status(403).json({ error: "Session missing. Exam rejected." });
+    }
+    const activeSession = await SessionLog.findById(sessionId);
+    if (!activeSession) {
+       return res.status(403).json({ error: "🚨 Security Alert: Exam rejected. Your account was logged in from another device." });
+    }
+
     if (new Date() > test.endTime) {
       return res.status(403).json({ 
         error: "Test submission rejected. The strict time limit and grace period have expired." 
       });
     }
+
+    // --- NEW: STRICT SERVER TIMER VERIFICATION ---
+    const attempt = await AttemptLog.findOne({ testId, studentEmail });
+    if (attempt) {
+      // 60-second grace period for mobile network latency
+      const gracePeriodEnd = new Date(attempt.forcedEndTime.getTime() + 60000);
+      if (new Date() > gracePeriodEnd) {
+        return res.status(403).json({ 
+          error: "Exam rejected. You exceeded the absolute server-enforced time limit." 
+        });
+      }
+    }
+    // ---------------------------------------------
 
     const existingResult = await Result.findOne({ testId, studentEmail });
     if (existingResult) {
