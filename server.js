@@ -111,7 +111,7 @@ app.post('/api/send-otp', async (req, res) => {
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
         to: email,
-        subject: "Your Registration OTP",
+        subject: "Your Registration OTP FOR SASTRATESTPORTAL (TESTING)",
         html: `<h2>Your Verification Code</h2>
                <p>Use the following 6-digit code to complete your registration. This code will expire in 5 minutes.</p>
                <h1 style="color: #007bff; letter-spacing: 5px;">${generatedOTP}</h1>`
@@ -435,13 +435,13 @@ app.get('/api/start-test/:testId', async (req, res) => {
 
     if (email) {
 
-      if (!sessionId) {
-         return res.status(403).json({ message: "Security error: Session missing. Please log in again." });
-      }
-      const activeSession = await SessionLog.findById(sessionId);
-      if (!activeSession) {
-         return res.status(403).json({ message: "Security Alert: You logged in from another device. Exam access denied." });
-      }
+      // if (!sessionId) {
+      //    return res.status(403).json({ message: "Security error: Session missing. Please log in again." });
+      // }
+      // const activeSession = await SessionLog.findById(sessionId);
+      // if (!activeSession) {
+      //    return res.status(403).json({ message: "Security Alert: You logged in from another device. Exam access denied." });
+      // }
 
       const existingResult = await Result.findOne({ testId, studentEmail: email });
       if (existingResult) {
@@ -518,13 +518,13 @@ app.post('/api/results', async (req, res) => {
     const test = await Test.findById(testId);
     if (!test) return res.status(404).json({ error: "Test not found." });
 
-    if (!sessionId) {
-       return res.status(403).json({ error: "Session missing. Exam rejected." });
-    }
-    const activeSession = await SessionLog.findById(sessionId);
-    if (!activeSession) {
-       return res.status(403).json({ error: "🚨 Security Alert: Exam rejected. Your account was logged in from another device." });
-    }
+    // if (!sessionId) {
+    //    return res.status(403).json({ error: "Session missing. Exam rejected." });
+    // }
+    // const activeSession = await SessionLog.findById(sessionId);
+    // if (!activeSession) {
+    //    return res.status(403).json({ error: "🚨 Security Alert: Exam rejected. Your account was logged in from another device." });
+    // }
 
     if (new Date() > test.endTime) {
       return res.status(403).json({ 
