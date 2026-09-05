@@ -20,11 +20,15 @@ const User = require('./models/User');
 const Result = require('./models/Result');
 const OTP = require('./models/OTP');
 
-// --- INLINE ATTEMPT LOG MODEL FOR SERVER TIMER ---
+// --- UPDATED ATTEMPT LOG MODEL (Now Supports Anti-Cheat Heartbeats) ---
 const attemptSchema = new mongoose.Schema({
   testId: String,
   studentEmail: String,
-  forcedEndTime: Date
+  forcedEndTime: Date,
+  status: { type: String, default: 'in-progress' },
+  lastActiveAt: { type: Date, default: Date.now },
+  violationFlag: { type: Boolean, default: false },
+  violationReason: String
 });
 const AttemptLog = mongoose.models.AttemptLog || mongoose.model('AttemptLog', attemptSchema);
 // ------------------------------------------------------
@@ -34,7 +38,39 @@ app.use(express.json());
 app.use(cors());
 
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("Connected to MongoDB"))
+  .then(() => {
+    console.log("Connected to MongoDB");
+    
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+    // --- NEW: ANTI-CHEAT BACKGROUND MONITOR ---
+    // Runs every 30 seconds to catch students who force-closed the app
+    setInterval(async () => {
+      const twentySecondsAgo = new Date(Date.now() - 20000);
+      try {
+        const deadSessions = await AttemptLog.find({
+          status: 'in-progress',
+          lastActiveAt: { $lt: twentySecondsAgo }
+        });
+
+        for (const session of deadSessions) {
+          console.log(`[ANTI-CHEAT] Auto-submitting abandoned test for ${session.studentEmail}`);
+          
+          session.status = 'submitted';
+          session.violationFlag = true; 
+          session.violationReason = 'App forcefully closed, backgrounded, or network disconnected';
+          await session.save();
+
+          // Optionally, you can automatically generate a 0-score Result document here 
+          // to completely lock them out of the test on the frontend.
+        }
+      } catch (error) {
+        console.error('Error processing dead sessions:', error);
+      }
+    }, 30000);
+
+  })
   .catch(err => console.error("MongoDB connection error:", err));
 
 // =========================================================================
@@ -108,7 +144,6 @@ app.post('/api/verify-otp', async (req, res) => {
   }
 });
 
-// 1. Send Password Reset OTP
 app.post('/api/forgot-password-otp', async (req, res) => {
   const { email } = req.body;
   try {
@@ -139,7 +174,6 @@ app.post('/api/forgot-password-otp', async (req, res) => {
   }
 });
 
-// 2. Verify and Reset Password
 app.post('/api/reset-password', async (req, res) => {
   const { email, otp, newPassword } = req.body;
   try {
@@ -206,7 +240,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // =========================================================================
-// TEST MANAGEMENT & QUESTION BANK (DYNAMIC COLLECTIONS)
+// TEST MANAGEMENT & QUESTION BANK 
 // =========================================================================
 
 app.get('/api/topics', async (req, res) => {
@@ -437,11 +471,19 @@ app.get('/api/start-test/:testId', async (req, res) => {
       }
 
       let attempt = await AttemptLog.findOne({ testId, studentEmail: email });
+      
+      // Prevent re-entry if they were auto-submitted for cheating
+      if (attempt && attempt.violationFlag) {
+        return res.status(403).json({ message: "Exam locked due to academic integrity violation." });
+      }
+
       if (!attempt) {
         attempt = new AttemptLog({
           testId,
           studentEmail: email,
-          forcedEndTime: new Date(Date.now() + (test.durationMinutes * 60000))
+          forcedEndTime: new Date(Date.now() + (test.durationMinutes * 60000)),
+          status: 'in-progress',
+          lastActiveAt: new Date()
         });
         await attempt.save();
       }
@@ -495,6 +537,23 @@ app.get('/api/start-test/:testId', async (req, res) => {
   }
 });
 
+// --- NEW: HEARTBEAT ROUTE ---
+app.post('/api/results/heartbeat', async (req, res) => {
+  const { testId, studentEmail } = req.body;
+  
+  try {
+    // Ping updates the last active timestamp to prevent auto-submission
+    await AttemptLog.updateOne(
+      { testId, studentEmail, status: 'in-progress' },
+      { $set: { lastActiveAt: new Date() } }
+    );
+    res.status(200).send('Heartbeat received');
+  } catch (error) {
+    console.error("Heartbeat error:", error);
+    res.status(500).send('Server error');
+  }
+});
+
 app.post('/api/results', async (req, res) => {
   const { testId, studentName, studentEmail, score, totalQuestions, answers } = req.body;
 
@@ -516,6 +575,10 @@ app.post('/api/results', async (req, res) => {
           error: "Exam rejected. You exceeded the absolute server-enforced time limit." 
         });
       }
+      
+      // Update attempt status to clear the heartbeat monitor
+      attempt.status = 'submitted';
+      await attempt.save();
     }
 
     const existingResult = await Result.findOne({ testId, studentEmail });
@@ -549,6 +612,3 @@ app.get('/api/results', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch results" });
   }
 });
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
