@@ -90,7 +90,7 @@ app.post('/api/send-otp', async (req, res) => {
   const { email } = req.body;
   try {
     const domain = email.split('@')[1];
-    if (domain !== 'sastra.ac.in' && domain !== 'sastra.edu') {
+    if (domain !== 'sastra.ac.in' && domain !== 'src.sastra.ac.in') {
       return res.status(400).json({ error: "Access restricted. Please use your official university email ID." });
     }
 
@@ -236,6 +236,61 @@ app.post('/api/login', async (req, res) => {
   } catch (error) {
     console.error("LOGIN ERROR:", error); 
     res.status(500).json({ error: "Error logging in" });
+  }
+});
+
+// --- SIDEBAR PROFILE & RESULTS ROUTES ---
+
+// 1. Get user profile details
+app.get('/api/users/profile/:email', async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.params.email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({
+      name: user.name,
+      email: user.email,
+      studentClass: user.studentClass || '',
+      year: user.year || ''
+    });
+  } catch (error) {
+    console.error("Profile fetch error:", error);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
+  }
+});
+
+// 2. Get student's test history
+app.get('/api/results/student/:email', async (req, res) => {
+  try {
+    // Assuming your Result model has a 'studentEmail' field
+    const results = await Result.find({ studentEmail: req.params.email }).sort({ createdAt: -1 });
+    res.json({ results });
+  } catch (error) {
+    console.error("Results fetch error:", error);
+    res.status(500).json({ error: 'Failed to fetch test history' });
+  }
+});
+
+// 3. Update user class and year
+app.put('/api/users/update', async (req, res) => {
+  try {
+    const { email, studentClass, year } = req.body;
+    
+    const updatedUser = await User.findOneAndUpdate(
+      { email: email },
+      { $set: { studentClass: studentClass, year: year } },
+      { new: true } // Returns the updated document
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({ message: 'Profile updated successfully', user: updatedUser }); 
+  } catch (error) {
+    console.error("Profile update error:", error);
+    res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
