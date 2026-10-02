@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const resultSchema = new mongoose.Schema({
   testId: { type: mongoose.Schema.Types.ObjectId, ref: 'Test' },
+  testName: { type: String },
   studentName: String,
   studentEmail: String,
   score: Number,
