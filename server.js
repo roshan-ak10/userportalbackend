@@ -260,17 +260,6 @@ app.get('/api/users/profile/:email', async (req, res) => {
   }
 });
 
-// 2. Get student's test history
-app.get('/api/results/student/:email', async (req, res) => {
-  try {
-    // Assuming your Result model has a 'studentEmail' field
-    const results = await Result.find({ studentEmail: req.params.email }).sort({ createdAt: -1 });
-    res.json({ results });
-  } catch (error) {
-    console.error("Results fetch error:", error);
-    res.status(500).json({ error: 'Failed to fetch test history' });
-  }
-});
 
 // 3. Update user class and year
 app.put('/api/users/update', async (req, res) => {
