@@ -261,24 +261,28 @@ app.get('/api/users/profile/:email', async (req, res) => {
 });
 
 
-// 3. Update user class and year
+// Update User Profile Route
 app.put('/api/users/update', async (req, res) => {
   try {
-    const { email, studentClass, year } = req.body;
-    
-    const updatedUser = await User.findOneAndUpdate(
-      { email: email },
-      { $set: { studentClass: studentClass, year: year } },
-      { new: true } // Returns the updated document
-    );
+    const { email, studentClass, year, theme } = req.body;
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: 'User not found' });
+    // Find the user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ message: 'Profile updated successfully', user: updatedUser }); 
+    // Update only the fields that were sent in the request
+    if (studentClass !== undefined) user.studentClass = studentClass;
+    if (year !== undefined) user.year = year;
+    if (theme !== undefined) user.theme = theme;
+
+    // Save the updated user to MongoDB
+    await user.save();
+
+    res.json({ message: 'Profile updated successfully', user });
   } catch (error) {
-    console.error("Profile update error:", error);
+    console.error("Update profile error:", error);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });

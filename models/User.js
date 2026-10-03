@@ -9,7 +9,10 @@ const userSchema = new mongoose.Schema({
   
   // --- NEW FIELDS ADDED FOR SIDEBAR PROFILE ---
   studentClass: { type: String, default: '' },
-  year: { type: String, default: '' }
+  year: { type: String, default: '' },
+  theme: { type: String, default: 'light' },
+  
+  createdAt: { type: Date, default: Date.now }
 });
 
 module.exports = mongoose.model('User', userSchema);
